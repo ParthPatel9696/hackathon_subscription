@@ -22,7 +22,7 @@ const productSchema = new mongoose.Schema({
   costPrice: { type: Number, default: 0, min: 0 },
   notes: { type: String, default: '' },
   variants: [variantGroupSchema],
-  taxRate: { type: Number, default: 0.10 }, // Default 10% tax
+  taxRate: { type: Number, default: 0.10, min: 0, max: 1 }, // Default 10% tax
   createdAt: { type: Date, default: Date.now }
 });
 

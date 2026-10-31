@@ -1,25 +1,43 @@
 import { useQuery } from '@tanstack/react-query';
-import { Activity, AlertTriangle, ArrowUpRight, CircleDollarSign, CreditCard } from 'lucide-react';
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Activity, AlertTriangle, CircleDollarSign, CreditCard, FileWarning, FileText, Users, Wallet } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Link } from 'react-router-dom';
 import api from '../api';
 import { useAuthStore } from '../store';
+import PageHeader from '../components/PageHeader';
 
 export default function Dashboard() {
   const user = useAuthStore((state) => state.user);
-  const { data, isLoading, error } = useQuery({ queryKey: ['metrics'], queryFn: async () => (await api.get('/dashboard/metrics')).data, enabled: user.role !== 'customer' });
+  const { data, isLoading, error, refetch } = useQuery({ queryKey: ['metrics'], queryFn: async () => (await api.get('/dashboard/metrics')).data, enabled: user.role !== 'customer' });
   if (user.role === 'customer') return <CustomerOverview />;
+  if (error) return <><PageHeader title="Business overview" subtitle="Live subscription and billing performance." /><p className="error" role="alert">{error.response?.data?.error || 'Metrics are unavailable.'} <button className="inline-action" onClick={() => refetch()}>Try again</button></p></>;
   const metrics = data?.metrics;
   const cards = [
     ['Monthly recurring revenue', metrics?.mrr, CircleDollarSign, 'text-emerald-600'],
     ['Active subscriptions', metrics?.activeSubscriptionsCount, Activity, 'text-blue-600'],
-    ['Collected revenue', metrics?.totalCollected, CreditCard, 'text-violet-600'],
-    ['Outstanding balance', metrics?.pendingAmount, AlertTriangle, 'text-amber-600']
+    ['Customers', metrics?.totalCustomers, Users, 'text-blue-600'],
+    ['Revenue collected', metrics?.totalCollected, CreditCard, 'text-emerald-600'],
+    ['Outstanding balance', metrics?.pendingAmount, AlertTriangle, 'text-amber-600'],
+    ['Overdue invoices', metrics?.overdueCount, FileWarning, 'text-rose-600']
   ];
-  return <><Header title="Executive overview" subtitle="A real-time view of your subscription business." />{error && <p className="error mb-5">{error.response?.data?.error || 'Metrics are unavailable.'}</p>}{isLoading ? <p>Loading metrics...</p> : <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map(([label, value, Icon, color]) => <div className="card" key={label}><div className="flex justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={19} className={color} /></div><p className="mt-5 text-2xl font-bold">{typeof value === 'number' && label !== 'Active subscriptions' ? `$${value.toLocaleString()}` : value ?? 0}</p><p className="mt-2 flex items-center gap-1 text-xs text-slate-400"><ArrowUpRight size={13} /> Live from MongoDB</p></div>)}</div><div className="card mt-6 h-80"><h2 className="mb-4 font-semibold">Subscription health</h2><ResponsiveContainer width="100%" height="90%"><AreaChart data={Object.entries(metrics?.statusPipeline || {}).map(([name, value]) => ({ name, value }))}><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#46d3b2" stopOpacity={0.45} /><stop offset="100%" stopColor="#46d3b2" stopOpacity={0} /></linearGradient></defs><XAxis dataKey="name" /><YAxis allowDecimals={false} /><Tooltip /><Area type="monotone" dataKey="value" stroke="#159a81" fill="url(#fill)" /></AreaChart></ResponsiveContainer></div></>}</>;
+  return <><PageHeader title="Business overview" subtitle="Live subscription and billing performance." />{isLoading ? <p role="status">Loading business metrics…</p> : <><div className="metric-grid">{cards.map(([label, value, Icon, color]) => <div className="card metric-card" key={label}><div className="flex justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className={color} /></div><p className="metric-value">{typeof value === 'number' && !['Active subscriptions', 'Customers', 'Overdue invoices'].includes(label) ? `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : value ?? 0}</p><p className="mt-2 flex items-center gap-1 text-xs text-slate-400"><span className="live-dot" /> Live account data</p></div>)}</div><div className="dashboard-panel card mt-6"><div className="panel-heading"><div><h2>Subscription lifecycle</h2><p>Current records grouped by status</p></div><span>All time</span></div><ResponsiveContainer width="100%" height={255}><BarChart data={Object.entries(metrics?.statusPipeline || {}).map(([name, value]) => ({ name, value }))} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}><CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 4" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#7f8e88' }} /><YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#7f8e88' }} /><Tooltip /><Bar dataKey="value" name="Subscriptions" fill="#167d6b" radius={[3,3,0,0]} maxBarSize={44} /></BarChart></ResponsiveContainer></div></>}</>;
 }
 
 function CustomerOverview() {
-  return <><Header title="My subscription hub" subtitle="Track your plans, invoices, and payment history." /><div className="card"><p className="font-semibold">Welcome to Brightloop</p><p className="mt-2 text-sm text-slate-500">Use the navigation to view your active subscriptions and account billing history.</p></div></>;
+  const summary = useQuery({ queryKey: ['customer-me'], queryFn: async () => (await api.get('/customers/me')).data.data });
+  const portfolio = summary.data;
+  return <><PageHeader title="My subscription hub" subtitle="Your Brightloop subscriptions, invoices, and payments in one place." />
+    {summary.isError && <p className="error mb-4" role="alert">Unable to load your customer summary. <button className="inline-action" onClick={() => summary.refetch()}>Try again</button></p>}
+    <div className="metric-grid customer-metrics">
+      <div className="card metric-card"><div className="flex justify-between"><p className="text-sm text-slate-500">Subscriptions</p><Wallet size={18} className="text-blue-600"/></div><p className="metric-value">{portfolio?.summary?.subscriptions ?? '—'}</p><p className="mt-2 text-xs text-slate-400">{portfolio?.summary?.activeSubscriptions || 0} active</p></div>
+      <div className="card metric-card"><div className="flex justify-between"><p className="text-sm text-slate-500">Total invoiced</p><FileText size={18} className="text-blue-600"/></div><p className="metric-value">{money(portfolio?.summary?.invoiced)}</p><p className="mt-2 text-xs text-slate-400">Across all billing records</p></div>
+      <div className="card metric-card"><div className="flex justify-between"><p className="text-sm text-slate-500">Payments made</p><CreditCard size={18} className="text-emerald-600"/></div><p className="metric-value">{money(portfolio?.summary?.paid)}</p><p className="mt-2 text-xs text-slate-400">Recorded payments</p></div>
+      <div className="card metric-card"><div className="flex justify-between"><p className="text-sm text-slate-500">Outstanding</p><AlertTriangle size={18} className="text-amber-600"/></div><p className="metric-value">{money(portfolio?.summary?.outstanding)}</p><p className="mt-2 text-xs text-slate-400">Open invoice balances</p></div>
+    </div>
+    <div className="customer-detail-grid mt-6"><section className="card"><div className="panel-heading"><div><h2>Recent subscriptions</h2><p>Plans connected to your account</p></div><Link className="inline-action" to="/app/subscriptions">View all</Link></div>{portfolio?.subscriptions?.slice(0,4).map((row) => <div className="compact-record" key={row._id}><span><strong>{row.subscriptionNumber}</strong><small>{row.planName} · {row.billingFrequency}</small></span><span className={`status-text status-${row.status?.toLowerCase()}`}>{row.status}</span></div>)}{!summary.isLoading && !portfolio?.subscriptions?.length && <p className="empty-copy">No subscriptions yet. <Link className="inline-action" to="/app/plans">Explore available plans</Link></p>}</section><section className="card"><div className="panel-heading"><div><h2>Latest invoices</h2><p>Recent billing statements</p></div><Link className="inline-action" to="/app/invoices">View all</Link></div>{portfolio?.invoices?.slice(0,4).map((row) => <div className="compact-record" key={row._id}><span><strong>{row.invoiceNumber}</strong><small>{new Date(row.invoiceDate).toLocaleDateString()} · {money(row.grandTotal)}</small></span><span className={`status-text status-${row.status?.toLowerCase()}`}>{row.status}</span></div>)}{!summary.isLoading && !portfolio?.invoices?.length && <p className="empty-copy">Invoices will appear here when billing begins.</p>}</section></div>
+  </>;
 }
 
-export function Header({ title, subtitle }) { return <header className="mb-7"><h1 className="text-2xl font-bold text-ink">{title}</h1><p className="mt-1 text-sm text-slate-500">{subtitle}</p></header>; }
+function money(amount) { return amount === undefined ? '—' : `$${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+
+export { PageHeader as Header };

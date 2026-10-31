@@ -4,6 +4,7 @@ const Plan = require('../models/Plan');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const { fromMinor, calculateLine } = require('../utils/money');
+const { advanceBillingDate } = require('../services/billingService');
 
 // Valid state transitions map
 const VALID_TRANSITIONS = {
@@ -126,7 +127,7 @@ exports.createSubscription = async (req, res) => {
 
     const customer = req.user.role === 'customer'
       ? req.user
-      : await User.findOne({ _id: customerId, role: 'customer' }).select('_id name email companyName');
+      : await User.findOne({ _id: customerId, role: 'customer', accountStatus: 'Active' }).select('_id name email companyName');
     if (!customer) {
       return res.status(400).json({ success: false, error: 'A valid customer is required.' });
     }
@@ -166,12 +167,17 @@ exports.createSubscription = async (req, res) => {
         variantPriceExtra = variantOption.priceExtra;
       }
 
+      const unitPrice = plan.product && product._id.toString() === plan.product.toString()
+        ? plan.basePrice
+        : product.salesPrice;
       const calculation = calculateLine({
-        unitPrice: product.salesPrice,
+        unitPrice,
         variantPriceExtra,
         quantity: line.quantity || 1,
         taxRate: product.taxRate,
-        discountAmount: line.discountAmount || 0
+        // Discounts must be validated and applied by the server. Never accept
+        // a client-supplied amount as a price reduction.
+        discountAmount: 0
       });
 
       subtotalMinor += calculation.subtotalMinor;
@@ -185,7 +191,7 @@ exports.createSubscription = async (req, res) => {
         variantPriceExtra,
         variantPriceExtraMinor: calculation.variantPriceExtraMinor,
         quantity: calculation.quantity,
-        unitPrice: product.salesPrice,
+        unitPrice,
         unitPriceMinor: calculation.unitPriceMinor,
         taxRate: product.taxRate,
         taxAmount: fromMinor(calculation.taxMinor),
@@ -197,6 +203,12 @@ exports.createSubscription = async (req, res) => {
       };
     }));
 
+    if (plan.product) {
+      const primaryLine = computedLines.find((line) => line.product.toString() === plan.product.toString());
+      if (!primaryLine) return res.status(400).json({ success: false, error: 'This plan requires a line for its associated product.' });
+      if (primaryLine.quantity < plan.minQuantity) return res.status(400).json({ success: false, error: `This plan requires a minimum quantity of ${plan.minQuantity}.` });
+    }
+
     const recurringTotalMinor = subtotalMinor + taxTotalMinor - discountTotalMinor;
     const count = await Subscription.countDocuments();
     const subscriptionNumber = `SUB-${new Date().getFullYear()}-${String(count + 101).padStart(4, '0')}`;
@@ -205,8 +217,7 @@ exports.createSubscription = async (req, res) => {
     const expiryDate = new Date();
     expiryDate.setFullYear(expiryDate.getFullYear() + 1);
 
-    const nextBillingDate = new Date();
-    nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+    const nextBillingDate = advanceBillingDate(startDate, plan.billingFrequency);
 
     const newSub = new Subscription({
       subscriptionNumber,
@@ -236,6 +247,7 @@ exports.createSubscription = async (req, res) => {
     await newSub.save();
     res.status(201).json({ success: true, data: newSub });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const status = err instanceof TypeError || ['ValidationError', 'CastError'].includes(err.name) ? 400 : 500;
+    res.status(status).json({ success: false, error: status === 400 ? err.message : 'Unable to create subscription draft.' });
   }
 };

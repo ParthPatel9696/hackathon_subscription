@@ -41,6 +41,10 @@ exports.verifyToken = async (req, res, next) => {
       });
     }
 
+    if (user.role === 'customer' && user.accountStatus === 'Archived') {
+      return res.status(401).json({ success: false, error: 'This customer account is archived. Contact support to restore access.' });
+    }
+
     req.user = user;
     next();
   } catch (err) {

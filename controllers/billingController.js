@@ -1,4 +1,5 @@
 const Invoice = require('../models/Invoice');
+const mongoose = require('mongoose');
 const { runRecurringBilling } = require('../services/billingService');
 
 // POST /api/billing/run-batch
@@ -44,12 +45,18 @@ exports.getInvoices = async (req, res) => {
 exports.updateInvoiceStatus = async (req, res) => {
   try {
     const { status } = req.body;
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid invoice id.' });
     const invoice = await Invoice.findById(req.params.id);
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
-    const allowedStatuses = ['Draft', 'Confirmed', 'Overdue', 'Cancelled'];
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({ success: false, error: 'Invalid invoice status.' });
-    }
+    const allowedTransitions = {
+      Draft: ['Confirmed', 'Cancelled'],
+      Confirmed: ['Overdue', 'Cancelled'],
+      Overdue: ['Cancelled']
+    };
+    if (!(allowedTransitions[invoice.status] || []).includes(status)) return res.status(400).json({ success: false, error: 'Invalid invoice status transition.' });
+    if (status === 'Overdue' && new Date(invoice.dueDate) >= new Date()) return res.status(400).json({ success: false, error: 'An invoice can only be marked overdue after its due date.' });
+    const paidAmountMinor = invoice.paidAmountMinor ?? Math.round(Number(invoice.paidAmount || 0) * 100);
+    if (status === 'Cancelled' && paidAmountMinor > 0) return res.status(400).json({ success: false, error: 'An invoice with recorded payments cannot be cancelled.' });
 
     invoice.status = status;
     await invoice.save();

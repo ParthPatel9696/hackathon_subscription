@@ -28,7 +28,9 @@ const generateToken = (user) => {
 // POST /api/auth/register (New Customer Sign Up - Problem Statement Page 2)
 exports.register = async (req, res) => {
   try {
-    const { email, password, name, companyName } = req.body;
+    const { password, companyName, phone, billingAddress, termsAccepted } = req.body;
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
 
     if (!email || !password || !name) {
       return res.status(400).json({
@@ -36,13 +38,16 @@ exports.register = async (req, res) => {
         error: 'Name, email, and password are required.'
       });
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
+    }
 
     // Email unique check
-    const existing = await User.findOne({ email: email.toLowerCase() });
+    const existing = await User.findOne({ email });
     if (existing) {
       return res.status(400).json({
         success: false,
-        error: 'An account with this email address already exists. Please sign in.'
+        error: 'Unable to create an account with those details. Try signing in if you already have access.'
       });
     }
 
@@ -60,11 +65,18 @@ exports.register = async (req, res) => {
       });
     }
 
+    if (termsAccepted === false) {
+      return res.status(400).json({ success: false, error: 'You must accept the terms to create an account.' });
+    }
+
     const newUser = new User({
-      email: email.toLowerCase(),
+      email,
       password,
       name,
       companyName: companyName || '',
+      phone: typeof phone === 'string' ? phone.trim() : '',
+      billingAddress: typeof billingAddress === 'string' ? billingAddress.trim() : '',
+      termsAcceptedAt: termsAccepted ? new Date() : null,
       role: 'customer' // Public registrations are always customers
     });
 
@@ -81,6 +93,8 @@ exports.register = async (req, res) => {
         email: newUser.email,
         name: newUser.name,
         companyName: newUser.companyName,
+        phone: newUser.phone,
+        billingAddress: newUser.billingAddress,
         role: newUser.role
       }
     });
@@ -92,7 +106,8 @@ exports.register = async (req, res) => {
 // POST /api/auth/login
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
 
     if (!email || !password) {
       return res.status(400).json({
@@ -101,11 +116,11 @@ exports.login = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || user.accountStatus === 'Archived') {
       return res.status(401).json({
         success: false,
-        error: 'Invalid credentials. User not found.'
+        error: 'Invalid email or password.'
       });
     }
 
@@ -129,6 +144,8 @@ exports.login = async (req, res) => {
         email: user.email,
         name: user.name,
         companyName: user.companyName,
+        phone: user.phone,
+        billingAddress: user.billingAddress,
         role: user.role
       }
     });
@@ -147,6 +164,8 @@ exports.getMe = async (req, res) => {
         email: req.user.email,
         name: req.user.name,
         companyName: req.user.companyName,
+        phone: req.user.phone,
+        billingAddress: req.user.billingAddress,
         role: req.user.role
       }
     });
@@ -178,8 +197,6 @@ exports.forgotPassword = async (req, res) => {
 
     // In a production app, nodemailer sends email. In hackathon mode, provide the simulated link:
     const resetUrl = `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/reset-password?token=${resetToken}`;
-    console.log(`[PASSWORD RESET SIMULATION] Reset link for ${user.email}: ${resetUrl}`);
-
     const response = {
       success: true,
       message: 'If an account exists with this email, password reset instructions have been sent.'

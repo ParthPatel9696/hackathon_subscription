@@ -5,19 +5,14 @@ const api = axios.create({
   withCredentials: true
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('brightloop_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+      if (error.response?.status === 401 && window.location.pathname.startsWith('/app') && !error.config?.url?.includes('/auth/logout')) {
+        const hadSession = Boolean(localStorage.getItem('brightloop_user'));
       localStorage.removeItem('brightloop_token');
       localStorage.removeItem('brightloop_user');
-      window.location.assign('/login');
+        if (hadSession) window.location.assign('/session-expired');
     }
     return Promise.reject(error);
   }

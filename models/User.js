@@ -35,6 +35,13 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  phone: { type: String, trim: true, default: '' },
+  billingAddress: { type: String, trim: true, default: '' },
+  accountStatus: { type: String, enum: ['Active', 'Archived'], default: 'Active' },
+  termsAcceptedAt: {
+    type: Date,
+    default: null
+  },
   resetPasswordToken: {
     type: String,
     default: null

@@ -1,5 +1,6 @@
 const Payment = require('../models/Payment');
 const Invoice = require('../models/Invoice');
+const mongoose = require('mongoose');
 const { toMinor, fromMinor } = require('../utils/money');
 
 // POST /api/payments
@@ -7,24 +8,52 @@ exports.recordPayment = async (req, res) => {
   try {
     const { invoiceId, amount, method, paymentDate, referenceNote, recordedBy } = req.body;
 
+    if (!mongoose.isValidObjectId(invoiceId)) {
+      return res.status(400).json({ success: false, error: 'A valid invoice is required.' });
+    }
     const invoice = await Invoice.findById(invoiceId);
     if (!invoice) {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
     }
+    if (!['Confirmed', 'Overdue'].includes(invoice.status)) {
+      return res.status(400).json({ success: false, error: 'Payments can only be recorded against confirmed or overdue invoices.' });
+    }
 
-    const payAmount = parseFloat(amount);
-    if (isNaN(payAmount) || payAmount <= 0) {
+    const payAmount = Number(amount);
+    if (!Number.isFinite(payAmount) || payAmount <= 0) {
       return res.status(400).json({ success: false, error: 'Valid payment amount is required' });
     }
     const allowedMethods = ['Bank Transfer', 'Credit Card', 'UPI / Online', 'Check'];
     if (method && !allowedMethods.includes(method)) {
       return res.status(400).json({ success: false, error: 'Unsupported payment method.' });
     }
+    const paymentTimestamp = paymentDate ? new Date(paymentDate) : new Date();
+    if (!Number.isFinite(paymentTimestamp.getTime())) return res.status(400).json({ success: false, error: 'Enter a valid payment date.' });
+    if (referenceNote !== undefined && String(referenceNote).length > 500) return res.status(400).json({ success: false, error: 'Payment reference must be 500 characters or fewer.' });
     const amountMinor = toMinor(payAmount);
     const grandTotalMinor = invoice.grandTotalMinor ?? toMinor(invoice.grandTotal);
     const paidAmountMinor = invoice.paidAmountMinor ?? toMinor(invoice.paidAmount || 0);
     if (amountMinor > grandTotalMinor - paidAmountMinor) {
       return res.status(400).json({ success: false, error: 'Payment cannot exceed the outstanding invoice balance.' });
+    }
+
+    const newPaidAmountMinor = paidAmountMinor + amountMinor;
+    const nextStatus = newPaidAmountMinor >= grandTotalMinor ? 'Paid' : invoice.status;
+    const updatedInvoice = await Invoice.findOneAndUpdate({
+      _id: invoice._id,
+      status: invoice.status,
+      paidAmountMinor,
+      paidAmount: invoice.paidAmount || 0
+    }, {
+      $set: {
+        paidAmountMinor: newPaidAmountMinor,
+        paidAmount: fromMinor(newPaidAmountMinor),
+        grandTotalMinor,
+        status: nextStatus
+      }
+    }, { new: true, runValidators: true });
+    if (!updatedInvoice) {
+      return res.status(409).json({ success: false, error: 'The invoice balance changed. Refresh and try again.' });
     }
 
     const payment = new Payment({
@@ -33,30 +62,33 @@ exports.recordPayment = async (req, res) => {
       amount: fromMinor(amountMinor),
       amountMinor,
       method: method || 'Bank Transfer',
-      paymentDate: paymentDate || new Date(),
+      paymentDate: paymentTimestamp,
       referenceNote: referenceNote || '',
       recordedBy: req.user._id
     });
 
-    await payment.save();
-
-    // Reconcile invoice
-    invoice.paidAmountMinor = paidAmountMinor + amountMinor;
-    invoice.paidAmount = fromMinor(invoice.paidAmountMinor);
-    invoice.grandTotalMinor = grandTotalMinor;
-    if (invoice.paidAmountMinor >= grandTotalMinor) {
-      invoice.status = 'Paid';
+    try {
+      await payment.save();
+    } catch (paymentError) {
+      await Invoice.findOneAndUpdate({ _id: invoice._id, paidAmountMinor: newPaidAmountMinor }, {
+        $set: {
+          paidAmountMinor,
+          paidAmount: invoice.paidAmount || 0,
+          status: invoice.status
+        }
+      });
+      throw paymentError;
     }
-    await invoice.save();
 
     res.status(201).json({
       success: true,
-      message: `Payment of $${payAmount} recorded for invoice ${invoice.invoiceNumber}. Status: ${invoice.status}`,
+      message: `Payment of $${fromMinor(amountMinor)} recorded for invoice ${invoice.invoiceNumber}. Status: ${updatedInvoice.status}`,
       payment,
-      invoice
+      invoice: updatedInvoice
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const invalidInput = err instanceof TypeError;
+    res.status(invalidInput ? 400 : 500).json({ success: false, error: invalidInput ? err.message : 'Unable to record payment.' });
   }
 };
 

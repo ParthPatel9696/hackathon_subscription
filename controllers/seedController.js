@@ -100,6 +100,7 @@ exports.seedDatabase = async (req, res) => {
     const enterprisePlan = await Plan.create({
       name: 'Enterprise Cloud Suite',
       code: 'ENT-MONTHLY',
+      product: erpProduct._id,
       billingFrequency: 'monthly',
       basePrice: 1500,
       minQuantity: 1,
@@ -110,6 +111,7 @@ exports.seedDatabase = async (req, res) => {
     const businessYearlyPlan = await Plan.create({
       name: 'Standard Business Yearly',
       code: 'BUS-YEARLY',
+      product: erpProduct._id,
       billingFrequency: 'yearly',
       basePrice: 5400,
       minQuantity: 1,
@@ -119,6 +121,7 @@ exports.seedDatabase = async (req, res) => {
     const starterPlan = await Plan.create({
       name: 'Starter Cloud Package',
       code: 'STARTER-MO',
+      product: erpProduct._id,
       billingFrequency: 'monthly',
       basePrice: 89,
       minQuantity: 1,
