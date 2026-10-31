@@ -298,6 +298,22 @@ npm run dev
 The client runs on **`http://localhost:5173`** and uses `VITE_API_URL` when provided;
 otherwise it connects to `http://localhost:5000/api`.
 
+### Frontend business workflows
+
+The client now provides interactive operations for the backend workflows that have
+corresponding API endpoints:
+
+- Search, status filtering, refresh, and CSV export on resource tables.
+- Create quotations from available plans and products.
+- Transition subscriptions through valid lifecycle states only.
+- Record full or partial invoice payments with supported payment methods.
+- Create and validate discount definitions through the API.
+- Run the recurring billing batch from the invoice workspace.
+
+Customer, product, plan editing, invoice PDF generation, and report-specific
+date-range APIs are not exposed by the current backend routes, so those actions
+remain read-only until their server endpoints are added.
+
 ## 🧭 Current architecture and security boundaries
 
 The backend preserves the original endpoint paths while using the following flow:
