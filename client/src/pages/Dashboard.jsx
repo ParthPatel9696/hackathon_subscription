@@ -1,3 +1,4 @@
+import { useReducedMotion } from 'motion/react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, CircleDollarSign, CreditCard, FileWarning, FileText, Users, Wallet } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -8,6 +9,7 @@ import { useAuthStore } from '../store';
 import PageHeader from '../components/PageHeader';
 
 export default function Dashboard() {
+  const reducedMotion = useReducedMotion();
   const user = useAuthStore((state) => state.user);
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ['metrics'], queryFn: async () => (await api.get('/dashboard/metrics')).data, enabled: user.role !== 'customer' });
   if (user.role === 'customer') return <CustomerOverview />;
@@ -21,12 +23,14 @@ export default function Dashboard() {
     ['Outstanding balance', metrics?.pendingAmount, AlertTriangle, 'text-amber-600'],
     ['Overdue invoices', metrics?.overdueCount, FileWarning, 'text-rose-600']
   ];
-  return <><PageHeader title="Business overview" subtitle="Live subscription and billing performance." />{isLoading ? <p role="status">Loading business metricsâ€¦</p> : <><div className="metric-grid">{cards.map(([label, value, Icon, color]) => <div className="card metric-card" key={label}><div className="flex justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className={color} /></div><p className="metric-value">{typeof value === 'number' && !['Active subscriptions', 'Customers', 'Overdue invoices'].includes(label) ? formatCurrency(value) : value ?? 0}</p><p className="mt-2 flex items-center gap-1 text-xs text-slate-400"><span className="live-dot" /> Live account data</p></div>)}</div><div className="dashboard-panel card mt-6"><div className="panel-heading"><div><h2>Subscription lifecycle</h2><p>Current records grouped by status</p></div><span>All time</span></div><ResponsiveContainer width="100%" height={255}><BarChart data={Object.entries(metrics?.statusPipeline || {}).map(([name, value]) => ({ name, value }))} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}><CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 4" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#7f8e88' }} /><YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#7f8e88' }} /><Tooltip /><Bar dataKey="value" name="Subscriptions" fill="#167d6b" radius={[3,3,0,0]} maxBarSize={44} /></BarChart></ResponsiveContainer></div></>}</>;
+  return <><PageHeader title="Business overview" subtitle="Live subscription and billing performance." />{isLoading ? <p role="status">Loading business metrics…</p> : <><div className="metric-grid">{cards.map(([label, value, Icon, color]) => <div className="card metric-card" key={label}><div className="flex justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className={color} /></div><p className="metric-value">{typeof value === 'number' && !['Active subscriptions', 'Customers', 'Overdue invoices'].includes(label) ? formatCurrency(value) : value ?? 0}</p><p className="mt-2 flex items-center gap-1 text-xs text-slate-400"><span className="live-dot" /> Live account data</p></div>)}</div><div className="dashboard-panel card mt-6"><div className="panel-heading"><div><h2>Subscription lifecycle</h2><p>Current records grouped by status</p></div><span>All time</span></div><ResponsiveContainer width="100%" height={255}><BarChart data={Object.entries(metrics?.statusPipeline || {}).map(([name, value]) => ({ name, value }))} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}><CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 4" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#7f8e88' }} /><YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#7f8e88' }} /><Tooltip /><Bar isAnimationActive={!reducedMotion} dataKey="value" name="Subscriptions" fill="#167d6b" radius={[3,3,0,0]} maxBarSize={44} /></BarChart></ResponsiveContainer></div></>}</>;
 }
 function CustomerOverview() {
   const summary = useQuery({ queryKey: ['customer-me'], queryFn: async () => (await api.get('/customers/me')).data.data });
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: async () => (await api.get('/notifications')).data });
   const portfolio = summary.data;
+  if (summary.isLoading) return <><PageHeader title="Your account overview" subtitle="Subscriptions, invoices, and payments." /><p className="card" role="status">Loading account summary…</p></>;
+  if (summary.isError) return <><PageHeader title="Your account overview" /><p className="error" role="alert">Unable to load your customer summary. <button className="inline-action" onClick={() => summary.refetch()}>Retry</button></p></>;
   const nextRenewal = (portfolio?.subscriptions || []).filter((item) => item.status === 'Active' && item.nextBillingDate).sort((a, b) => new Date(a.nextBillingDate) - new Date(b.nextBillingDate))[0];
   return <><PageHeader title={`Welcome${portfolio?.customer?.name ? `, ${portfolio.customer.name}` : ''}`} subtitle={`${portfolio?.customer?.companyName || 'Your Brightloop account'} · subscriptions, invoices, and payments.`} />
     {summary.isError && <p className="error mb-4" role="alert">Unable to load your customer summary. <button className="inline-action" onClick={() => summary.refetch()}>Try again</button></p>}

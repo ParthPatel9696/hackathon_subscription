@@ -29,5 +29,7 @@ const paymentSchema = new mongoose.Schema({
 });
 
 paymentSchema.index({ invoice: 1, referenceKey: 1 }, { unique: true, partialFilterExpression: { referenceKey: { $type: 'string' } } });
+paymentSchema.index({ invoice: 1, status: 1, createdAt: 1 });
+paymentSchema.index({ paymentDate: -1 });
 
 module.exports = mongoose.model('Payment', paymentSchema);

@@ -34,7 +34,10 @@ exports.search = async (req, res) => {
       Subscription.find({ ...(isInternal ? {} : { customer: customerId }), $or: [{ subscriptionNumber: regex }, { customerName: regex }, { planName: regex }] }).select('subscriptionNumber customerName planName status').limit(5),
       Invoice.find({ ...(isInternal ? {} : { customer: customerId }), $or: [{ invoiceNumber: regex }, { customerName: regex }, { customerEmail: regex }] }).select('invoiceNumber customerName grandTotal status').limit(5)
     ]);
-    const paymentMatch = { $or: [{ invoiceNumber: regex }, { method: regex }, { referenceNote: regex }] };
+    const paymentMatch = { $and: [
+      { $or: [{ invoiceNumber: regex }, { method: regex }, { referenceNote: regex }] },
+      { $or: [{ status: 'posted' }, { status: { $exists: false } }] }
+    ] };
     const payments = isInternal
       ? await Payment.find(paymentMatch).select('invoiceNumber method referenceNote').limit(5)
       : await Payment.aggregate([

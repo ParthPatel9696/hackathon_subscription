@@ -21,6 +21,7 @@ export default function Register() {
     try {
       const { confirmPassword, ...payload } = form;
       const { data } = await api.post('/auth/register', payload);
+      queryClient.clear();
       setSession(data.user);
       queryClient.setQueryData(['current-user'], data.user);
       navigate('/app/dashboard', { replace: true });

@@ -1,72 +1,47 @@
-import { useMemo, useState } from 'react';
+import { useReducedMotion } from 'motion/react';
+﻿import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Link } from 'react-router-dom';
 import api from '../api';
-import { formatCurrency, formatDate, toMinorUnits } from '../utils/locale';
+import { formatCurrency, formatDate } from '../utils/locale';
 import PageHeader from '../components/PageHeader';
 
-const load = (endpoint) => async () => (await api.get(endpoint)).data;
-
 export default function Reports() {
-  const [range, setRange] = useState('all');
-  const metrics = useQuery({ queryKey: ['metrics'], queryFn: load('/dashboard/metrics') });
-  const invoices = useQuery({ queryKey: ['invoices'], queryFn: load('/invoices') });
-  const payments = useQuery({ queryKey: ['payments'], queryFn: load('/payments') });
-  const subscriptions = useQuery({ queryKey: ['subscriptions'], queryFn: load('/subscriptions') });
-  const cutoff = range === 'all' ? null : Date.now() - Number(range) * 86400000;
-  const inRange = (row, fields) => !cutoff || fields.some((field) => row[field] && new Date(row[field]).getTime() >= cutoff);
-  const filteredInvoices = (invoices.data?.data || []).filter((row) => inRange(row, ['invoiceDate', 'createdAt']));
-  const filteredPayments = (payments.data?.data || []).filter((row) => inRange(row, ['paymentDate', 'createdAt']));
-  const filteredSubscriptions = (subscriptions.data?.data || []).filter((row) => inRange(row, ['startDate', 'createdAt']));
-  const chartData = useMemo(() => {
-    const groups = {};
-    filteredInvoices.filter((invoice) => !['Draft', 'Cancelled'].includes(invoice.status)).forEach((invoice) => {
-      const month = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(invoice.invoiceDate || invoice.createdAt));
-      groups[month] = (groups[month] || 0) + (Number.isSafeInteger(invoice.grandTotalMinor) ? invoice.grandTotalMinor : toMinorUnits(invoice.grandTotal || 0));
-    });
-    return Object.entries(groups).map(([month, totalMinor]) => ({ month, total: totalMinor / 100 }));
-  }, [filteredInvoices]);
-  const exportReport = () => {
-    const rows = filteredInvoices.map((invoice) => ({
-      invoice: invoice.invoiceNumber,
-      currency: invoice.currency || 'INR',
-      customer: invoice.customerName,
-      status: invoice.status,
-      total: invoice.grandTotal,
-      paid: invoice.paidAmount || 0,
-      outstanding: Math.max(0, invoice.grandTotal - (invoice.paidAmount || 0))
-    }));
-    const keys = Object.keys(rows[0] || { invoice: '', customer: '', status: '', total: '', paid: '', outstanding: '' });
-    const csvValue = (value) => {
-      const raw = String(value ?? '');
-      const safe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
-      return `"${safe.replaceAll('"', '""')}"`;
-    };
-    const csv = [keys.map(csvValue).join(','), ...rows.map((row) => keys.map((key) => csvValue(row[key])).join(','))].join('\n');
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    link.download = 'brightloop-revenue-report.csv';
-    link.click();
-    URL.revokeObjectURL(link.href);
+  const reducedMotion = useReducedMotion();
+  const [filters, setFilters] = useState({ startDate: '', endDate: '', status: '' });
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const report = useQuery({ queryKey: ['finance-report', filters], queryFn: async () => (await api.get('/reports/finance', { params: filters })).data });
+  const summary = report.data?.summary;
+  const exportReport = async () => {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/reports/finance/export', { params: filters, responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url; link.download = 'brightloop-invoices-INR.csv';
+      document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    } catch { setExportError('The report could not be exported. Try again.'); }
+    finally { setExporting(false); }
   };
-  const loading = metrics.isLoading || invoices.isLoading || payments.isLoading || subscriptions.isLoading;
-  const error = metrics.error || invoices.error || payments.error || subscriptions.error;
-  const reportCards = [
-    ['Invoices', filteredInvoices.length],
-    ['Payments', filteredPayments.length],
-    ['Subscriptions', filteredSubscriptions.length],
-    ['Overdue invoices', metrics.data?.metrics?.overdueCount ?? 0]
-  ];
-  return <><PageHeader title="Reports" subtitle="Review revenue, billing activity, and subscription performance." />
-    <div className="mb-5 flex flex-wrap gap-2">
-      <label className="sr-only" htmlFor="report-range">Report date range</label>
-      <select id="report-range" className="field w-auto" value={range} onChange={(event) => setRange(event.target.value)}><option value="all">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select>
-      <button type="button" className="button flex items-center gap-2" onClick={() => [metrics, invoices, payments, subscriptions].forEach((query) => query.refetch())}><RefreshCw aria-hidden="true" size={16} /> Refresh report</button>
-      <button type="button" className="button flex items-center gap-2" onClick={exportReport}><Download aria-hidden="true" size={16} /> Export revenue CSV</button>
+  const update = (key) => (event) => { setFilters((current) => ({ ...current, [key]: event.target.value })); setExportError(''); };
+  return <>
+    <PageHeader title="Finance reports" subtitle="Cash collections and invoiced value, calculated across every matching record." />
+    <div className="resource-toolbar report-filters">
+      <label>From<input className="field" type="date" value={filters.startDate} max={filters.endDate || undefined} onChange={update('startDate')} /></label>
+      <label>Through<input className="field" type="date" value={filters.endDate} min={filters.startDate || undefined} onChange={update('endDate')} /></label>
+      <label>Invoice status<select className="field" value={filters.status} onChange={update('status')}><option value="">All statuses</option>{['Draft', 'Confirmed', 'Paid', 'Overdue', 'Cancelled'].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <button type="button" className="button secondary-button" disabled={report.isFetching} onClick={() => report.refetch()}><RefreshCw size={15} /> Refresh</button>
+      <button type="button" className="button secondary-button" disabled={report.isLoading || report.isError || exporting} onClick={exportReport}><Download size={15} />{exporting ? 'Exporting…' : 'Export invoices CSV'}</button>
     </div>
-    {error ? <p className="error mb-5" role="alert">{error.response?.data?.error || 'Unable to load report data.'} <button className="inline-action" onClick={() => [metrics, invoices, payments, subscriptions].forEach((query) => query.refetch())}>Try again</button></p> : loading ? <p role="status">Loading report data…</p> : <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{reportCards.map(([label, value]) => <div className="card" key={label}><p className="text-sm text-slate-500">{label}</p><p className="mt-3 text-2xl font-bold">{value}</p></div>)}</div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-2"><section className="card"><h2 className="mb-4 font-semibold">Invoice value by month</h2>{chartData.length ? <ResponsiveContainer width="100%" height={280}><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="month" /><YAxis /><Tooltip formatter={(value) => `${formatCurrency(value)}`} /><Bar dataKey="total" fill="#159a81" name="Invoice total" /></BarChart></ResponsiveContainer> : <p className="text-sm text-slate-500">No invoice data for this period.</p>}</section>
-        <section className="card"><h2 className="mb-4 font-semibold">Finance summary</h2><dl className="grid gap-4 sm:grid-cols-2"><div><dt className="text-sm text-slate-500">MRR</dt><dd className="text-xl font-semibold">{formatCurrency(metrics.data?.metrics?.mrr || 0)}</dd></div><div><dt className="text-sm text-slate-500">Collected revenue</dt><dd className="text-xl font-semibold">{formatCurrency(metrics.data?.metrics?.totalCollected || 0)}</dd></div><div><dt className="text-sm text-slate-500">Outstanding balance</dt><dd className="text-xl font-semibold">{formatCurrency(metrics.data?.metrics?.pendingAmount || 0)}</dd></div><div><dt className="text-sm text-slate-500">Payments recorded</dt><dd className="text-xl font-semibold">{filteredPayments.length}</dd></div></dl></section></div></>}
+    {exportError && <p className="error mb-4" role="alert">{exportError}</p>}
+    {report.isError ? <p className="error" role="alert">{report.error?.response?.data?.error || 'Unable to load the finance report.'} <button className="inline-action" onClick={() => report.refetch()}>Retry</button></p> : report.isLoading ? <p className="card" role="status">Loading finance report…</p> : <>
+      <div className="metric-grid">{[['Active subscriptions', summary.activeSubscriptions], ['Cash collected', formatCurrency(summary.collected)], ['Outstanding balance', formatCurrency(summary.outstanding)], ['Overdue invoices', summary.overdueCount]].map(([label, value]) => <div className="card metric-card" key={label}><p>{label}</p><strong className="metric-value">{value}</strong></div>)}</div>
+      <p className="report-definition">Cash uses the payment date. Invoice balances use the issue date. Active subscriptions describe the current portfolio. All dates use India time; draft and cancelled invoices are excluded from receivables.</p>
+      <section className="card mt-5"><div className="panel-heading"><div><h2>Collections and invoiced value</h2><p>{summary.invoices} invoices · {summary.payments} posted payments · INR</p></div></div>{report.data.monthly.length ? <ResponsiveContainer width="100%" height={280}><BarChart data={report.data.monthly}><CartesianGrid vertical={false} stroke="var(--border)" /><XAxis dataKey="month" tick={{ fill: 'var(--muted)', fontSize: 11 }} /><YAxis width={90} tick={{ fill: 'var(--muted)', fontSize: 10 }} tickFormatter={(value) => formatCurrency(value)} /><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--ink)' }} /><Bar isAnimationActive={!reducedMotion} dataKey="invoiced" fill="var(--accent)" name="Invoiced" radius={[3, 3, 0, 0]} /><Bar isAnimationActive={!reducedMotion} dataKey="collected" fill="#91aaa0" name="Collected cash" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer> : <p className="resource-empty">No confirmed invoices or posted payments match these dates.</p>}</section>
+      <section className="card mt-5"><div className="panel-heading"><div><h2>Overdue invoices</h2><p>Ten oldest outstanding invoices in the selection</p></div></div>{report.data.overdue.length ? <div className="overflow-x-auto"><table className="resource-table"><thead><tr><th>Invoice</th><th>Customer</th><th>Due date</th><th>Days late</th><th className="amount-cell">Balance</th></tr></thead><tbody>{report.data.overdue.map((row) => <tr key={row._id}><td><Link className="inline-action" to={`/app/invoices/${row._id}`}>{row.invoiceNumber}</Link></td><td>{row.customerName}</td><td>{formatDate(row.dueDate)}</td><td>{row.daysLate}</td><td className="amount-cell">{formatCurrency(row.outstanding)}</td></tr>)}</tbody></table></div> : <p className="empty-copy">No overdue invoices in this selection.</p>}</section>
+    </>}
   </>;
 }

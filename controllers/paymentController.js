@@ -2,7 +2,7 @@ const Payment = require('../models/Payment');
 const Invoice = require('../models/Invoice');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-const { toMinor, fromMinor } = require('../utils/money');
+const { toMinor, fromMinor, formatCurrency } = require('../utils/money');
 const { isTransactionUnsupported } = require('../services/billingService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
 const { recordAudit } = require('../services/auditService');
@@ -198,7 +198,7 @@ exports.recordPayment = async (req, res) => {
     recordAudit({ actor: req.user, action: 'payment_recorded', resourceType: 'Payment', resourceId: result.payment._id, customer: result.invoice.customer, newValue: { amountMinor: input.amountMinor, method: result.payment.method, status: result.payment.status }, metadata: { invoiceNumber: result.invoice.invoiceNumber, reference: result.payment.referenceNote } }).catch(() => {});
     res.status(201).json({
       success: true,
-      message: `Payment of ₹${fromMinor(input.amountMinor)} recorded for invoice ${result.invoice.invoiceNumber}. Status: ${result.invoice.status}`,
+      message: `Payment of ${formatCurrency(fromMinor(input.amountMinor))} recorded for invoice ${result.invoice.invoiceNumber}. Status: ${result.invoice.status}`,
       payment: result.payment,
       invoice: result.invoice
     });

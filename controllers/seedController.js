@@ -50,7 +50,7 @@ exports.seedDatabase = async (req, res) => {
       companyName: 'Apex Global Corp'
     });
 
-    // 2. Seed Products with Variants (Brand: Odoo adds â‚¹60)
+    // 2. Seed Products with Variants (Brand: Odoo adds ₹60)
     const erpProduct = await Product.create({
       name: 'Brightloop Core ERP Suite',
       type: 'software',
@@ -143,7 +143,7 @@ exports.seedDatabase = async (req, res) => {
 
     await Discount.create({
       code: 'SCALEUP500',
-      name: 'â‚¹500 Fixed Annual Rebate',
+      name: '₹500 Fixed Annual Rebate',
       discountType: 'fixed',
       value: 500,
       minPurchaseAmount: 3000,
@@ -184,7 +184,7 @@ exports.seedDatabase = async (req, res) => {
         {
           product: erpProduct._id,
           productName: 'Brightloop Core ERP Suite',
-          variantName: 'Odoo Brand Edition (+ â‚¹60.00)',
+          variantName: 'Odoo Brand Edition (+ ₹60.00)',
           variantPriceExtra: 60,
           quantity: 1,
           unitPrice: 1500,

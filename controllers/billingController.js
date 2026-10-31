@@ -3,13 +3,15 @@ const mongoose = require('mongoose');
 const { runRecurringBilling } = require('../services/billingService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
 const { recordAudit } = require('../services/auditService');
+const { renderInvoicePdf } = require('../services/invoicePdf');
+const { sendInvoice } = require('../services/mailer');
 
 // POST /api/billing/run-batch
 // Generates invoices for all active subscriptions due for billing, preventing double-billing.
 exports.runRecurringBillingBatch = async (req, res) => {
   try {
     const { forceAllActive } = req.body;
-    const { createdInvoices, skippedSubscriptions, recoveredSubscriptions } = await runRecurringBilling({
+    const { createdInvoices, skippedSubscriptions, recoveredSubscriptions, failedSubscriptions, catchUpPending } = await runRecurringBilling({
       forceAllActive,
       actorRole: req.user.role
     });
@@ -20,9 +22,13 @@ exports.runRecurringBillingBatch = async (req, res) => {
       generatedCount: createdInvoices.length,
       skippedCount: skippedSubscriptions.length,
       recoveredCount: recoveredSubscriptions.length,
+      failedCount: failedSubscriptions.length,
+      catchUpPendingCount: catchUpPending.length,
       invoices: createdInvoices,
       skipped: skippedSubscriptions,
-      recovered: recoveredSubscriptions
+      recovered: recoveredSubscriptions,
+      failed: failedSubscriptions,
+      catchUpPending
     });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -37,6 +43,7 @@ exports.getInvoices = async (req, res) => {
     let query = {};
     if (req.user.role === 'customer') query.customer = req.user._id;
     if (status && status !== 'ALL') query.status = status;
+    if (req.query.payable === 'true') query.status = { $in: ['Confirmed', 'Overdue'] };
     if (customerId && req.user.role !== 'customer') query.customer = customerId;
     if (req.query.subscriptionId) {
       if (!mongoose.isValidObjectId(req.query.subscriptionId)) return res.status(400).json({ success: false, error: 'Invalid subscription id.' });
@@ -71,6 +78,39 @@ exports.getInvoiceById = async (req, res) => {
   }
 };
 
+exports.downloadInvoicePdf = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid invoice id.' });
+    const filter = { _id: req.params.id };
+    if (req.user.role === 'customer') filter.customer = req.user._id;
+    const invoice = await Invoice.findOne(filter).lean();
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found.' });
+    const pdf = await renderInvoicePdf(invoice);
+    const filename = `${String(invoice.invoiceNumber || 'invoice').replace(/[^a-zA-Z0-9_-]/g, '')}.pdf`;
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Length': pdf.length, 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'private, no-store' });
+    return res.send(pdf);
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Unable to generate this invoice PDF.' });
+  }
+};
+
+exports.sendInvoiceEmail = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid invoice id.' });
+    const invoice = await Invoice.findById(req.params.id).lean();
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found.' });
+    if (!['Confirmed', 'Overdue', 'Paid'].includes(invoice.status)) return res.status(409).json({ success: false, error: 'Confirm the invoice before sending it.' });
+    if (!invoice.customerEmail) return res.status(409).json({ success: false, error: 'This invoice has no customer email address.' });
+    const pdf = await renderInvoicePdf(invoice);
+    const sent = await sendInvoice({ to: invoice.customerEmail, invoice, pdfBuffer: pdf });
+    if (!sent) return res.status(503).json({ success: false, error: 'Invoice email is not configured. Set SMTP_HOST and sender credentials.' });
+    recordAudit({ actor: req.user, action: 'invoice_emailed', resourceType: 'Invoice', resourceId: invoice._id, customer: invoice.customer, newValue: { status: invoice.status }, metadata: { invoiceNumber: invoice.invoiceNumber, recipient: invoice.customerEmail } }).catch(() => {});
+    return res.json({ success: true, message: `Invoice sent to ${invoice.customerEmail}.` });
+  } catch (error) {
+    return res.status(502).json({ success: false, error: 'Invoice delivery failed. Check SMTP configuration and retry.' });
+  }
+};
+
 // PATCH /api/invoices/:id/status
 exports.updateInvoiceStatus = async (req, res) => {
   try {
@@ -89,10 +129,17 @@ exports.updateInvoiceStatus = async (req, res) => {
       ? Math.round(Number(invoice.paidAmount || 0) * 100)
       : invoice.paidAmountMinor;
     if (status === 'Cancelled' && paidAmountMinor > 0) return res.status(400).json({ success: false, error: 'An invoice with recorded payments cannot be cancelled.' });
+    if (status === 'Cancelled' && await require('../models/Payment').exists({ invoice: invoice._id, status: 'pending' })) return res.status(409).json({ success: false, error: 'Reconcile the pending payment before cancelling this invoice.' });
 
     const filter = { _id: invoice._id, status: invoice.status };
     if (invoice.$isDefault?.('paidAmountMinor')) filter.$or = [{ paidAmountMinor: 0 }, { paidAmountMinor: { $exists: false } }];
     else filter.paidAmountMinor = paidAmountMinor;
+    // Share the payment writer's lock and legacy balance guard so cancellation cannot
+    // interrupt a standalone payment journal between its insert and balance update.
+    filter.$and = [
+      { $or: [{ paymentLockExpiresAt: null }, { paymentLockExpiresAt: { $lte: new Date() } }] },
+      { $expr: { $eq: [{ $ifNull: ['$paidAmount', 0] }, invoice.paidAmount || 0] } }
+    ];
     const updated = await Invoice.findOneAndUpdate(filter, { $set: { status } }, { new: true, runValidators: true });
     if (!updated) return res.status(409).json({ success: false, error: 'Invoice changed while you were updating it. Refresh and try again.' });
     recordAudit({ actor: req.user, action: 'invoice_status_changed', resourceType: 'Invoice', resourceId: updated._id, customer: updated.customer, previousValue: { status: invoice.status }, newValue: { status: updated.status }, metadata: { invoiceNumber: updated.invoiceNumber } }).catch(() => {});

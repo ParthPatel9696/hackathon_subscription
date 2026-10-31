@@ -27,8 +27,9 @@ exports.listProducts = async (req, res) => {
     if (req.user.role !== 'admin') { filter.isActive = { $ne: false }; filter.billingEligible = { $ne: false }; }
     if (req.query.status === 'Active') filter.isActive = { $ne: false };
     if (req.query.status === 'Inactive') filter.isActive = false;
+    if (req.user.role === 'customer' && req.query.status === 'Inactive') filter._id = { $in: [] };
     applyNumericRange(filter, 'salesPrice', req.query.minAmount, req.query.maxAmount);
-    if (!applyDateRange(filter, 'availableFrom', req.query.startDate, req.query.endDate)) return res.status(400).json({ success: false, error: 'Enter valid date filters.' });
+    if (!applyDateRange(filter, 'createdAt', req.query.startDate, req.query.endDate)) return res.status(400).json({ success: false, error: 'Enter valid date filters.' });
     let query = Product.find(filter).sort(sortFromQuery(req.query.sort, { record: 'name', amount: 'salesPrice', details: 'type' }, { createdAt: -1 })).skip((page - 1) * pageSize).limit(pageSize);
     if (req.user.role !== 'admin') query = query.select('-costPrice');
     const [data, total] = await Promise.all([query, Product.countDocuments(filter)]);
@@ -44,7 +45,7 @@ exports.createProduct = async (req, res) => {
       const settings = await WorkspaceSettings.findOne({ key: 'default' }).select('defaultTaxRate').lean();
       input.taxRate = settings?.defaultTaxRate ?? 0;
     }
-    if (input.taxComponents !== undefined) { if (!Array.isArray(input.taxComponents) || input.taxComponents.some((component) => !component.label || !Number.isFinite(Number(component.rate)) || Number(component.rate) < 0 || Number(component.rate) > 1) || input.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0) > 1) return res.status(400).json({ success: false, error: 'Provide tax components with labels and rates totaling no more than 100%.' }); input.taxRate = input.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0); }
+    if (input.taxComponents !== undefined) { if (!Array.isArray(input.taxComponents) || input.taxComponents.some((component) => !component.label || !Number.isFinite(Number(component.rate)) || Number(component.rate) < 0 || Number(component.rate) > 1) || input.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0) > 1) return res.status(400).json({ success: false, error: 'Provide tax components with labels and rates totaling no more than 100%.' }); if (input.taxComponents.length) input.taxRate = input.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0); }
     const product = await Product.create(input);
     recordAudit({ actor: req.user, action: 'product_created', resourceType: 'Product', resourceId: product._id, newValue: { name: product.name, sku: product.sku, salesPrice: product.salesPrice, currency: product.currency } }).catch(() => {});
     res.status(201).json({ success: true, data: product });
@@ -60,7 +61,7 @@ exports.updateProduct = async (req, res) => {
     if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
     const input = pick(req.body, productFields);
     Object.assign(product, input);
-    if (req.body.taxComponents !== undefined) { if (!Array.isArray(req.body.taxComponents) || req.body.taxComponents.some((component) => !component.label || !Number.isFinite(Number(component.rate)) || Number(component.rate) < 0 || Number(component.rate) > 1) || req.body.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0) > 1) return res.status(400).json({ success: false, error: 'Provide tax components with labels and rates totaling no more than 100%.' }); product.taxRate = req.body.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0); }
+    if (req.body.taxComponents !== undefined) { if (!Array.isArray(req.body.taxComponents) || req.body.taxComponents.some((component) => !component.label || !Number.isFinite(Number(component.rate)) || Number(component.rate) < 0 || Number(component.rate) > 1) || req.body.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0) > 1) return res.status(400).json({ success: false, error: 'Provide tax components with labels and rates totaling no more than 100%.' }); if (req.body.taxComponents.length) product.taxRate = req.body.taxComponents.reduce((sum, component) => sum + Number(component.rate), 0); }
     await product.save();
     recordAudit({ actor: req.user, action: 'product_updated', resourceType: 'Product', resourceId: product._id, newValue: { name: product.name, sku: product.sku, salesPrice: product.salesPrice, currency: product.currency, isActive: product.isActive } }).catch(() => {});
     res.json({ success: true, data: product });

@@ -16,10 +16,16 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const notice = location.state?.message || '';
+  const demoAccounts = import.meta.env.DEV ? [
+    { role: 'Admin', email: 'admin@brightloop.com', password: 'Admin@Secure2024!' },
+    { role: 'Staff', email: 'jordan.lee@brightloop.com', password: 'Staff@Secure2024!' },
+    { role: 'Customer', email: 'finance@acmeretail.com', password: 'Acme@Customer2024!' }
+  ] : [];
   const submit = async (event) => {
     event.preventDefault(); setError(''); setLoading(true);
     try {
       const { data } = await api.post('/auth/login', form);
+      queryClient.clear();
       setSession(data.user);
       queryClient.setQueryData(['current-user'], data.user);
       navigate(location.state?.from?.startsWith('/app') ? location.state.from : '/app/dashboard', { replace: true });
@@ -28,6 +34,7 @@ export default function Login() {
   };
   return <AuthFrame title="Welcome back" subtitle="Sign in to your Brightloop workspace."><form onSubmit={submit} className="auth-form">
     {notice && <p className="text-sm text-emerald-700" role="status">{notice}</p>}
+    {demoAccounts.length > 0 && <section className="demo-login" aria-label="Development demo accounts"><p>Development demo accounts</p><div>{demoAccounts.map((account) => <button type="button" key={account.role} onClick={() => { setError(''); setForm({ email: account.email, password: account.password }); }}>{account.role}</button>)}</div><small>Choose a role to fill its README credentials. Sign in after running <code>npm run seed:demo</code>.</small></section>}
     <label className="form-label" htmlFor="login-email">Email address</label><input id="login-email" className="field" type="email" autoComplete="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
     <div className="password-label"><label className="form-label" htmlFor="login-password">Password</label><Link to="/forgot-password">Forgot password?</Link></div>
     <div className="password-wrap"><input id="login-password" className="field" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><button type="button" className="password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={17}/> : <Eye size={17}/>}</button></div>

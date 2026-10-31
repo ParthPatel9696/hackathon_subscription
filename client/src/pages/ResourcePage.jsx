@@ -36,12 +36,15 @@ export default function ResourcePage({ title, endpoint, resource }) {
   const tableColumns = resource === 'customers'
     ? [{ key: 'record', label: 'Customer' }, { key: 'status', label: 'Status' }, { key: 'activeSubscriptionCount', label: 'Active subs' }, { key: 'totalInvoiced', label: 'Invoiced' }, { key: 'totalPaid', label: 'Paid' }, { key: 'outstanding', label: 'Outstanding' }, { key: 'lastPaymentDate', label: 'Last payment' }, { key: 'assignedStaff', label: 'Assigned staff' }, { key: 'details', label: 'Company / tags' }, { key: 'actions', label: 'Actions' }]
     : [{ key: 'record', label: 'Name / number' }, { key: 'status', label: 'Status' }, { key: 'amount', label: 'Amount' }, { key: 'details', label: 'Details' }, { key: 'actions', label: 'Actions' }];
-  const [visibleColumns, setVisibleColumns] = useState(() => preferences.visible || tableColumns.map((column) => column.key));
-  const [columnOrder, setColumnOrder] = useState(() => preferences.order || tableColumns.map((column) => column.key));
-  const [density, setDensity] = useState(() => preferences.density || 'comfortable');
-  const [sorts, setSorts] = useState(() => preferences.sorts || []);
+  const columnKeys = tableColumns.map((column) => column.key);
+  const validColumns = (value) => Array.isArray(value) ? [...new Set(value.filter((key) => columnKeys.includes(key)))] : columnKeys;
+  const validSorts = (value) => Array.isArray(value) ? value.filter((sort) => sort && columnKeys.includes(sort.key) && ['asc', 'desc'].includes(sort.direction)).slice(0, 3) : [];
+  const [visibleColumns, setVisibleColumns] = useState(() => validColumns(preferences.visible));
+  const [columnOrder, setColumnOrder] = useState(() => [...new Set([...validColumns(preferences.order), ...columnKeys])]);
+  const [density, setDensity] = useState(() => preferences.density === 'compact' ? 'compact' : 'comfortable');
+  const [sorts, setSorts] = useState(() => validSorts(preferences.sorts));
   const [selectedRows, setSelectedRows] = useState({});
-  const [savedViews, setSavedViews] = useState(() => readPreferences(`${preferenceKey}_views`).views || []);
+  const [savedViews, setSavedViews] = useState(() => { const views = readPreferences(`${preferenceKey}_views`).views; return Array.isArray(views) ? views.filter((view) => view && typeof view.name === 'string') : []; });
 
   useEffect(() => {
     if (searchParams.get('action') !== 'create') return;
@@ -84,7 +87,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
     setServerPage(1);
   }, [searchParams, search, setSearch]);
   useEffect(() => { localStorage.setItem(preferenceKey, JSON.stringify({ visible: visibleColumns, order: columnOrder, density, sorts })); }, [preferenceKey, visibleColumns, columnOrder, density, sorts]);
-  const statuses = resource === 'customers' ? ['Active', 'Archived'] : resource === 'discounts' ? ['Active', 'Inactive'] : [...new Set(rows.map((row) => row.status || row.accountStatus).filter(Boolean))];
+  const statuses = resource === 'customers' ? ['Active', 'Archived'] : ['discounts', 'products', 'plans'].includes(resource) ? ['Active', 'Inactive'] : resource === 'invoices' ? ['Draft', 'Confirmed', 'Paid', 'Overdue', 'Cancelled'] : resource === 'quotations' ? ['Quotation'] : resource === 'subscriptions' ? ['Draft', 'Quotation', 'Confirmed', 'Active', 'Paused', 'Closed', 'Cancelled', 'Expired'] : [];
 
   const onSearch = (value) => {
     setSearch(value);
@@ -95,13 +98,13 @@ export default function ResourcePage({ title, endpoint, resource }) {
   const exportCsv = async (sourceRows) => {
     setExportError('');
     try {
-    let rowsToExport = sourceRows;
+    let rowsToExport = Array.isArray(sourceRows) ? sourceRows : null;
     if (!rowsToExport) {
-      rowsToExport = [...rows];
-      const total = Number(data?.total || rowsToExport.length);
+      rowsToExport = [];
+      const total = Number(data?.total || 0);
       const pageSize = Number(data?.pageSize || 50);
       const exportUrl = new URL(requestUrl, window.location.origin);
-      for (let page = 2; rowsToExport.length < total; page += 1) {
+      for (let page = 1; rowsToExport.length < total; page += 1) {
         exportUrl.searchParams.set('page', String(page));
         exportUrl.searchParams.set('limit', String(pageSize));
         const response = await api.get(`${exportUrl.pathname}${exportUrl.search}`);
@@ -136,7 +139,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
     return 0;
   });
   const saveView = (name) => { const views = [...savedViews.filter((view) => view.name !== name), { name, search, status: resource === 'customers' ? customerStatus : serverStatus, minAmount, maxAmount, dateFrom, dateTo, visible: visibleColumns, order: columnOrder, density, sorts }]; setSavedViews(views); localStorage.setItem(`${preferenceKey}_views`, JSON.stringify({ views })); };
-  const loadView = (name) => { const view = savedViews.find((item) => item.name === name); if (!view) return; setSearch(view.search || ''); setCustomerSearch(view.search || ''); setServerPage(1); setStatus(view.status || 'ALL'); setServerStatus(view.status || 'ALL'); setCustomerStatus(view.status || 'ALL'); setMinAmount(view.minAmount || ''); setMaxAmount(view.maxAmount || ''); setDateFrom(view.dateFrom || ''); setDateTo(view.dateTo || ''); setVisibleColumns(view.visible || tableColumns.map((column) => column.key)); setColumnOrder(view.order || tableColumns.map((column) => column.key)); setDensity(view.density || 'comfortable'); setSorts(view.sorts || []); };
+  const loadView = (name) => { const view = savedViews.find((item) => item.name === name); if (!view) return; setSearch(view.search || ''); setCustomerSearch(view.search || ''); setServerPage(1); setStatus(view.status || 'ALL'); setServerStatus(view.status || 'ALL'); setCustomerStatus(view.status || 'ALL'); setMinAmount(view.minAmount || ''); setMaxAmount(view.maxAmount || ''); setDateFrom(view.dateFrom || ''); setDateTo(view.dateTo || ''); setVisibleColumns(validColumns(view.visible)); setColumnOrder([...new Set([...validColumns(view.order), ...columnKeys])]); setDensity(view.density === 'compact' ? 'compact' : 'comfortable'); setSorts(validSorts(view.sorts)); };
   const toggleSelected = (row, checked) => setSelectedRows((current) => { const next = { ...current }; if (checked) next[row._id] = row; else delete next[row._id]; return next; });
 
   return <>
@@ -147,9 +150,9 @@ export default function ResourcePage({ title, endpoint, resource }) {
       {resource !== 'customers' && <><label className="sr-only" htmlFor="min-amount">Minimum amount</label><input id="min-amount" className="field w-32" type="number" min="0" step="0.01" value={minAmount} onChange={(e) => { setMinAmount(e.target.value); setServerPage(1); }} placeholder="Min amount"/><label className="sr-only" htmlFor="max-amount">Maximum amount</label><input id="max-amount" className="field w-32" type="number" min="0" step="0.01" value={maxAmount} onChange={(e) => { setMaxAmount(e.target.value); setServerPage(1); }} placeholder="Max amount"/></>}
       <label className="sr-only" htmlFor="filter-start-date">From date</label><input id="filter-start-date" className="field w-36" type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setServerPage(1); setCustomerPage(1); }} />
       <label className="sr-only" htmlFor="filter-end-date">To date</label><input id="filter-end-date" className="field w-36" type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setServerPage(1); setCustomerPage(1); }} />
-      {statuses.length > 0 && <><label className="sr-only" htmlFor="status-filter">Filter by status</label><select id="status-filter" className="field resource-status-filter" value={resource === 'customers' ? customerStatus : serverStatus} onChange={(event) => { setStatus(event.target.value); if (resource === 'customers') setCustomerStatus(event.target.value); else { setServerStatus(event.target.value); setServerPage(1); } }}><option value="ALL">All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></>}
+      {statuses.length > 0 && <><label className="sr-only" htmlFor="status-filter">Filter by status</label><select id="status-filter" className="field resource-status-filter" value={resource === 'customers' ? customerStatus : serverStatus} onChange={(event) => { setStatus(event.target.value); if (resource === 'customers') { setCustomerStatus(event.target.value); setCustomerPage(1); } else { setServerStatus(event.target.value); setServerPage(1); } }}><option value="ALL">All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></>}
       <button type="button" className="button secondary-button" onClick={() => refetch()}><RefreshCw size={15}/> Refresh</button>
-      <button type="button" className="button secondary-button" onClick={exportCsv}><Download size={15}/> Export CSV</button>
+      <button type="button" className="button secondary-button" disabled={isLoading || Boolean(error)} onClick={() => exportCsv()}><Download size={15}/> Export CSV</button>
       {resource === 'subscriptions' && isInternal && <button type="button" className="button" onClick={() => setModal('subscription')}><Plus size={15}/> New quotation</button>}
       {resource === 'customers' && isAdmin && <button type="button" className="button" onClick={() => setModal('customer')}><Plus size={15}/> Add customer</button>}
       {resource === 'products' && isAdmin && <button type="button" className="button" onClick={() => setModal('product')}><Plus size={15}/> Add product</button>}
@@ -163,13 +166,13 @@ export default function ResourcePage({ title, endpoint, resource }) {
     {resource !== 'customers' && (data?.total || 0) > (data?.pageSize || 50) && <div className="pagination-row"><span>Showing {((serverPage - 1) * (data.pageSize || 50)) + 1}–{Math.min(serverPage * (data.pageSize || 50), data.total)} of {data.total}</span><div><button className="pagination-button" disabled={serverPage <= 1} onClick={() => setServerPage((p) => p - 1)}>Previous</button><button className="pagination-button" disabled={serverPage * (data.pageSize || 50) >= data.total} onClick={() => setServerPage((p) => p + 1)}>Next</button></div></div>}
     {error && <p className="error mb-5" role="alert">{error.response?.data?.error || 'Unable to load records.'} <button className="inline-action" onClick={() => refetch()}>Try again</button></p>}
     <div className="card overflow-hidden p-0">
-      {isLoading ? <p className="p-6" role="status">Loading records…</p> : filtered.length === 0 ? <div className="resource-empty"><strong>{search ? 'No matching records' : `No ${title.toLowerCase()} yet`}</strong><span>{search ? 'Try another search term or clear the filter.' : 'Records will appear here when they are available.'}</span></div> :
+      {isLoading ? <p className="p-6" role="status">Loading records…</p> : error ? <p className="p-6">Retry to load these records.</p> : filtered.length === 0 ? <div className="resource-empty"><strong>{search ? 'No matching records' : `No ${title.toLowerCase()} yet`}</strong><span>{search ? 'Try another search term or clear the filter.' : 'Records will appear here when they are available.'}</span></div> :
         <div className="overflow-x-auto"><table className={`resource-table ${density}`}><caption className="sr-only">{title} records</caption><thead><tr><th><input type="checkbox" aria-label="Select all rows on this page" checked={sortedRows.length > 0 && sortedRows.every((row) => selectedRows[row._id])} onChange={(e) => sortedRows.forEach((row) => toggleSelected(row, e.target.checked))}/></th>{columnOrder.filter((key) => visibleColumns.includes(key)).map((key) => { const column = tableColumns.find((item) => item.key === key); return <th key={key} className={key === 'amount' ? 'amount-cell' : ''}><button className="table-sort-button" onClick={(event) => setSorts((current) => { const old = current.find((sort) => sort.key === key); const next = { key, direction: old?.direction === 'asc' ? 'desc' : 'asc' }; return event.shiftKey ? [...current.filter((sort) => sort.key !== key), next] : [next]; })}>{column.label}{sorts.find((sort) => sort.key === key) && (sorts.find((sort) => sort.key === key).direction === 'asc' ? ' ↑' : ' ↓')}</button></th>; })}</tr></thead><tbody>
           {sortedRows.map((row) => <tr key={row._id || row.id || row.code || row.invoiceNumber}>
             <td><input type="checkbox" aria-label={`Select ${row.name || row.subscriptionNumber || row.invoiceNumber || 'record'}`} checked={Boolean(selectedRows[row._id])} onChange={(e) => toggleSelected(row, e.target.checked)}/></td>
             {columnOrder.filter((key) => visibleColumns.includes(key)).map((key) => <td key={key} className={`${key === 'amount' ? 'amount-cell' : ''} ${key === 'record' ? 'record-primary' : ''} ${key === 'details' ? 'record-detail' : ''} ${key === 'actions' ? 'record-actions' : ''}`}>
             {key === 'record' && <>{recordHref(resource, row) ? <Link to={recordHref(resource, row)}>{row.name || row.subscriptionNumber || row.invoiceNumber || row.email || row.code || 'Record'}</Link> : row.name || row.subscriptionNumber || row.invoiceNumber || row.email || row.code || 'Record'}{row.email && row.name && <small>{row.email}</small>}</>}
-            {key === 'status' && <span className="badge">{resource === 'discounts' ? row.isActive ? 'Active' : 'Inactive' : row.status || row.accountStatus || row.role || '—'}</span>}
+            {key === 'status' && <span className="badge">{['discounts', 'products', 'plans'].includes(resource) ? row.isActive ? 'Active' : 'Inactive' : row.status || row.accountStatus || row.role || '—'}</span>}
               {key === 'amount' && formatAmount(row, resource)}
             {['totalInvoiced','totalPaid','outstanding','activeRecurring'].includes(key) && <span className="tabular-nums">{formatCurrency(row[key] || 0)}</span>}
             {key === 'activeSubscriptionCount' && row.activeSubscriptionCount}

@@ -15,6 +15,7 @@ const operationsCtrl = require('../controllers/operationsController');
 const catalogCtrl = require('../controllers/catalogController');
 const subscriptionRequestCtrl = require('../controllers/subscriptionRequestController');
 const settingsCtrl = require('../controllers/settingsController');
+const quotationTemplateCtrl = require('../controllers/quotationTemplateController');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { createRateLimiter } = require('../middleware/rateLimit');
 const { validateBody, validateObjectIdParam } = require('../middleware/validate');
@@ -66,6 +67,10 @@ router.get('/notifications', verifyToken, notificationCtrl.listNotifications);
 router.get('/activity-log', verifyToken, requireRole('admin', 'staff'), operationsCtrl.auditLog);
 router.get('/settings/workspace', verifyToken, settingsCtrl.getWorkspace);
 router.patch('/settings/workspace', verifyToken, requireRole('admin'), settingsCtrl.updateWorkspace);
+router.get('/quotation-templates', verifyToken, requireRole('admin', 'staff'), asyncHandler(quotationTemplateCtrl.list));
+router.post('/quotation-templates', verifyToken, requireRole('admin'), asyncHandler(quotationTemplateCtrl.create));
+router.patch('/quotation-templates/:id', verifyToken, requireRole('admin'), asyncHandler(quotationTemplateCtrl.update));
+router.patch('/quotation-templates/:id/status', verifyToken, requireRole('admin'), asyncHandler(quotationTemplateCtrl.setStatus));
 
 // ==========================================
 // Public / Semi-Public Catalogs
@@ -85,6 +90,8 @@ router.patch('/plans/:id/status', verifyToken, requireRole('admin'), catalogCtrl
 // Dashboard Finance Metrics (< 2s)
 // ==========================================
 router.get('/dashboard/metrics', verifyToken, requireRole('admin', 'staff'), dashboardCtrl.getFinanceMetrics);
+router.get('/reports/finance', verifyToken, requireRole('admin', 'staff'), require('../controllers/reportController').finance);
+router.get('/reports/finance/export', verifyToken, requireRole('admin', 'staff'), require('../controllers/reportController').exportInvoices);
 router.get('/billing/calendar', verifyToken, requireRole('admin', 'staff'), operationsCtrl.calendar);
 router.get('/subscriptions/health', verifyToken, requireRole('admin', 'staff'), operationsCtrl.health);
 router.get('/analytics/revenue/summary', verifyToken, requireRole('admin', 'staff'), operationsCtrl.revenue);
@@ -96,6 +103,10 @@ router.patch('/subscription-requests/:id/review', verifyToken, requireRole('admi
 // Subscriptions & Lifecycle State Machine
 // ==========================================
 router.get('/subscriptions', verifyToken, subscriptionCtrl.getSubscriptions);
+router.get('/subscriptions/:id/pdf', verifyToken, validateObjectIdParam('id'), subscriptionCtrl.downloadQuotationPdf);
+router.post('/subscriptions/:id/send', verifyToken, requireRole('admin', 'staff'), validateObjectIdParam('id'), subscriptionCtrl.sendQuotationEmail);
+router.post('/subscriptions/:id/respond', verifyToken, requireRole('customer'), validateObjectIdParam('id'), subscriptionCtrl.respondToQuotation);
+router.post('/subscriptions/:id/renew', verifyToken, requireRole('admin', 'staff'), validateObjectIdParam('id'), subscriptionCtrl.renewSubscription);
 router.get('/subscriptions/:id', verifyToken, subscriptionCtrl.getSubscriptionById);
 router.post('/subscriptions', verifyToken, requireRole('admin', 'staff'), subscriptionCtrl.createSubscription);
 router.post('/subscriptions/:id/plan-change/preview', verifyToken, requireRole('admin', 'staff'), validateObjectIdParam('id'), validateBody(planChangeBody), subscriptionCtrl.previewPlanChange);
@@ -107,6 +118,8 @@ router.post('/subscriptions/transition', verifyToken, requireRole('admin', 'staf
 // ==========================================
 router.post('/billing/run-batch', verifyToken, requireRole('admin', 'staff'), billingCtrl.runRecurringBillingBatch);
 router.get('/invoices', verifyToken, billingCtrl.getInvoices);
+router.get('/invoices/:id/pdf', verifyToken, validateObjectIdParam('id'), billingCtrl.downloadInvoicePdf);
+router.post('/invoices/:id/send', verifyToken, requireRole('admin', 'staff'), validateObjectIdParam('id'), billingCtrl.sendInvoiceEmail);
 router.get('/invoices/:id', verifyToken, billingCtrl.getInvoiceById);
 router.patch('/invoices/:id/status', verifyToken, requireRole('admin', 'staff'), billingCtrl.updateInvoiceStatus);
 

@@ -24,6 +24,13 @@ const fromMinor = (value) => {
   return value / CURRENCY_SCALE;
 };
 
+const formatCurrency = (value, { code = false } = {}) => new Intl.NumberFormat(business.locale, {
+  style: 'currency', currency: business.currency, currencyDisplay: code ? 'code' : 'symbol', minimumFractionDigits: 2, maximumFractionDigits: 2
+}).format(value).replace(/\u00a0/g, ' ');
+
+const invoiceOutstandingMinor = (invoice) => ['Draft', 'Cancelled'].includes(invoice.status) ? 0 : Math.max(0,
+  (invoice.grandTotalMinor ?? toMinor(invoice.grandTotal || 0)) - (invoice.paidAmountMinor ?? toMinor(invoice.paidAmount || 0)));
+
 const normalizeMonthlyMinor = ({ billingFrequency = 'monthly', subtotalMinor, discountMinor = 0, recurringTotalMinor, taxMinor = 0 }) => {
   const knownSubtotal = Number.isInteger(subtotalMinor) ? subtotalMinor : Number.isInteger(recurringTotalMinor) ? recurringTotalMinor - taxMinor : 0;
   const monthlyBase = Math.max(0, knownSubtotal - (Number.isInteger(discountMinor) ? discountMinor : 0));
@@ -80,6 +87,8 @@ module.exports = {
   CURRENCY_SCALE,
   toMinor,
   fromMinor,
+  formatCurrency,
+  invoiceOutstandingMinor,
   normalizeMonthlyMinor,
   calculateLine
 };

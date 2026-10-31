@@ -4,59 +4,18 @@ import api from '../api';
 import Modal, { Field, FormError, SelectField } from './Modal';
 import { useAuthStore } from '../store';
 import { formatCurrency, toMinorUnits } from '../utils/locale';
+import VariantEditor from './VariantEditor';
 
 function useSubmit(endpoint, method = 'post', invalidate = []) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload) => api[method](endpoint, payload),
-    onSuccess: () => invalidate.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }))
+    onSuccess: () => [...new Set([...invalidate.map((key) => key.replace(/^\//, '')), 'finance-report', 'customer-me', 'customer', 'invoice-detail', 'subscription', 'subscription-invoices', 'subscription-payments', 'product', 'plan', 'billing-calendar', 'subscription-health', 'revenue-intelligence'])].forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }))
   });
 }
 const currencyMinor = (minor) => formatCurrency(minor / 100);
 
-export function SubscriptionForm({ onClose, initialCustomer }) {
-  const user = useAuthStore((state) => state.user);
-  const workspaceSettings = useQuery({ queryKey: ['workspace-settings'], queryFn: async () => (await api.get('/settings/workspace')).data.data });
-  const { data: plans } = useQuery({ queryKey: ['plans'], queryFn: async () => (await api.get('/plans')).data });
-  const { data: products } = useQuery({ queryKey: ['products'], queryFn: async () => (await api.get('/products')).data });
-  const [customerSearch, setCustomerSearch] = useState('');
-  const customerQuery = useQuery({ queryKey: ['customer-picker', customerSearch], queryFn: async () => (await api.get('/customers', { params: { search: customerSearch, limit: 20 } })).data, enabled: user?.role !== 'customer' });
-  const [form, setForm] = useState({ planId: '', customerId: user?.role === 'customer' ? user.id : initialCustomer?._id || '', paymentTerms: '', productId: '', quantity: 1, variantName: '', discountCode: '' });
-  const mutation = useSubmit('/subscriptions', 'post', ['subscriptions', '/subscriptions', 'metrics']);
-  const selectedPlan = plans?.data?.find((item) => item._id === form.planId);
-  const selectedProduct = products?.data?.find((item) => item._id === form.productId);
-  const variants = selectedProduct?.variants?.flatMap((group) => group.options) || [];
-  const selectedVariant = variants.find((item) => item.name === form.variantName);
-  const quantity = Math.max(1, Number(form.quantity) || 1);
-  const unitPrice = selectedPlan?.product?._id === selectedProduct?._id ? Number(selectedPlan.basePrice) : Number(selectedProduct?.salesPrice || 0);
-  const unitMinor = toMinorUnits(unitPrice) + toMinorUnits(selectedVariant?.priceExtra || 0);
-  const subtotalMinor = unitMinor * quantity;
-  const taxRateScaled = BigInt(Math.round(Number(selectedProduct?.taxRate || 0) * 100_000_000));
-  const taxMinor = Number((BigInt(subtotalMinor) * taxRateScaled + 50_000_000n) / 100_000_000n);
-  const submit = (event) => {
-    event.preventDefault();
-    mutation.mutate({
-      customerId: form.customerId || undefined,
-      planId: form.planId,
-      planName: selectedPlan?.name,
-      paymentTerms: form.paymentTerms || undefined,
-      discountCode: form.discountCode.trim() || undefined,
-      lines: [{ productId: form.productId, quantity: Number(form.quantity), variantName: form.variantName || undefined }]
-    }, { onSuccess: onClose });
-  };
-  return <Modal title="Create quotation" onClose={onClose}><form onSubmit={submit} className="grid gap-4">
-    {user?.role !== 'customer' && <><Field label="Find customer" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search name, company, or email"/><SelectField label="Customer" required value={form.customerId} onChange={(e) => setForm({ ...form, customerId: e.target.value })}><option value="">Select a customer</option>{initialCustomer && !customerQuery.data?.data?.some((item) => item._id === initialCustomer._id) && <option value={initialCustomer._id}>{initialCustomer.companyName || initialCustomer.name} · {initialCustomer.email}</option>}{customerQuery.data?.data?.map((customer) => <option key={customer._id} value={customer._id}>{customer.companyName || customer.name} · {customer.email}</option>)}</SelectField></>}
-    <SelectField label="Plan" required value={form.planId} onChange={(e) => { const plan = plans?.data?.find((item) => item._id === e.target.value); setForm({ ...form, planId: e.target.value, productId: plan?.product?._id || '', variantName: '' }); }}><option value="">Select a plan</option>{plans?.data?.map((plan) => <option key={plan._id} value={plan._id}>{plan.name} · {plan.billingFrequency}</option>)}</SelectField>
-    <SelectField label="Product" required value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value, variantName: '' })}><option value="">Select a product</option>{products?.data?.filter((product) => !selectedPlan?.product?._id || product._id === selectedPlan.product._id).map((product) => <option key={product._id} value={product._id}>{product.name}</option>)}</SelectField>
-    {variants.length > 0 && <SelectField label="Variant" value={form.variantName} onChange={(e) => setForm({ ...form, variantName: e.target.value })}><option value="">No variant</option>{variants.map((variant) => <option key={variant._id} value={variant.name}>{variant.name} (+{formatCurrency(variant.priceExtra)})</option>)}</SelectField>}
-    <Field label="Quantity" type="number" min="1" required value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-    <SelectField label="Payment terms" value={form.paymentTerms || workspaceSettings.data?.defaultPaymentTerms || 'Net 30 Days'} onChange={(e) => setForm({ ...form, paymentTerms: e.target.value })}>{workspaceSettings.data?.defaultPaymentTerms && !['Net 30 Days', 'Due on Receipt', 'Net 60 Days'].includes(workspaceSettings.data.defaultPaymentTerms) && <option>{workspaceSettings.data.defaultPaymentTerms}</option>}<option>Net 30 Days</option><option>Due on Receipt</option><option>Net 60 Days</option></SelectField>
-    <Field label="Discount code" value={form.discountCode} onChange={(e) => setForm({ ...form, discountCode: e.target.value.toUpperCase() })} placeholder="Optional" />
-    {selectedProduct && <div className="billing-preview"><div><span>Estimated subtotal</span><strong>{currencyMinor(subtotalMinor)}</strong></div><div><span>Tax ({(Number(selectedProduct.taxRate || 0) * 100).toFixed(1)}%)</span><strong>{currencyMinor(taxMinor)}</strong></div><div className="preview-total"><span>Estimated recurring total</span><strong>{currencyMinor(subtotalMinor + taxMinor)} / {selectedPlan?.billingFrequency || 'period'}</strong></div><p>Final amounts are calculated and validated by Brightloop when you save.</p></div>}
-    <FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to create quotation.')} />
-    <button className="button" disabled={mutation.isPending || (user?.role !== 'customer' && customerQuery.isLoading)}>{mutation.isPending ? 'Saving…' : 'Create quotation'}</button>
-  </form></Modal>;
-}
+export { default as SubscriptionForm } from './QuotationForm';
 
 export function CustomerForm({ customer, onClose }) {
   const editing = Boolean(customer?._id);
@@ -105,7 +64,7 @@ export function TransitionForm({ subscription, onClose }) {
   const [targetStatus, setTargetStatus] = useState('');
   const [reason, setReason] = useState('');
   const mutation = useSubmit('/subscriptions/transition', 'post', ['subscriptions', '/subscriptions', 'notifications', 'metrics']);
-  const nextStatuses = { Draft: ['Quotation', 'Cancelled'], Quotation: ['Confirmed', 'Draft', 'Cancelled', 'Expired'], Confirmed: ['Active', 'Cancelled'], Active: ['Paused', 'Closed'], Paused: ['Active', 'Closed'], Closed: ['Draft'] }[subscription.status] || [];
+  const nextStatuses = { Draft: ['Quotation', 'Cancelled'], Quotation: ['Confirmed', 'Draft', 'Cancelled', 'Expired'], Confirmed: ['Active', 'Cancelled'], Active: ['Paused', 'Closed'], Paused: ['Active', 'Closed'], Closed: [] }[subscription.status] || [];
   const submit = (event) => {
     event.preventDefault();
     mutation.mutate({ id: subscription._id, targetStatus, reason }, { onSuccess: onClose });
@@ -142,21 +101,28 @@ export function PlanChangeForm({ subscription, onClose }) {
   </form></Modal>;
 }
 
-export function PaymentForm({ onClose }) {
-  const { data: invoices } = useQuery({ queryKey: ['invoices'], queryFn: async () => (await api.get('/invoices')).data });
-  const [form, setForm] = useState({ invoiceId: '', amount: '', method: 'Bank Transfer', referenceNote: '', paymentDate: '' });
+export function PaymentForm({ onClose, initialInvoice }) {
+  const [search, setSearch] = useState('');
+  const invoiceQuery = useQuery({ queryKey: ['invoices', 'payment-picker', search], queryFn: async () => (await api.get('/invoices', { params: { search, payable: true, limit: 50 } })).data });
+  const invoices = invoiceQuery.data;
+  const [form, setForm] = useState({ invoiceId: initialInvoice?._id || '', amount: '', method: 'Bank transfer', referenceNote: '', paymentDate: '' });
   const mutation = useSubmit('/payments', 'post', ['payments', 'invoices', '/payments', '/invoices', 'metrics', 'notifications']);
-  const invoice = invoices?.data?.find((item) => item._id === form.invoiceId);
-  const outstanding = invoice ? Math.max(0, (invoice.grandTotal || 0) - (invoice.paidAmount || 0)) : null;
+  const options = [...(invoices?.data || [])];
+  if (initialInvoice && !options.some((item) => item._id === initialInvoice._id)) options.unshift(initialInvoice);
+  const invoice = options.find((item) => item._id === form.invoiceId);
+  const outstanding = invoice ? Math.max(0, (invoice.grandTotalMinor ?? toMinorUnits(invoice.grandTotal || 0)) - (invoice.paidAmountMinor ?? toMinorUnits(invoice.paidAmount || 0))) / 100 : null;
   const submit = (event) => { event.preventDefault(); mutation.mutate({ ...form, amount: Number(form.amount), paymentDate: form.paymentDate || undefined }, { onSuccess: onClose }); };
   return <Modal title="Record payment" onClose={onClose}><form onSubmit={submit} className="grid gap-4">
-    <SelectField label="Invoice" required value={form.invoiceId} onChange={(e) => setForm({ ...form, invoiceId: e.target.value })}><option value="">Select an invoice</option>{invoices?.data?.filter((item) => item.status !== 'Paid' && item.status !== 'Cancelled').map((item) => <option key={item._id} value={item._id}>{item.invoiceNumber} — {formatCurrency(item.grandTotal - (item.paidAmount || 0))} outstanding</option>)}</SelectField>
+    <Field label="Find invoice" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search invoice number or customer" />
+    {invoiceQuery.isLoading && <p role="status">Loading payable invoices…</p>}
+    {invoiceQuery.isError && <p className="error" role="alert">Invoices could not be loaded. <button type="button" className="inline-action" onClick={() => invoiceQuery.refetch()}>Retry</button></p>}
+    <SelectField label="Invoice" required value={form.invoiceId} onChange={(e) => setForm({ ...form, invoiceId: e.target.value })}><option value="">Select an invoice</option>{options.filter((item) => ['Confirmed', 'Overdue'].includes(item.status)).map((item) => <option key={item._id} value={item._id}>{item.invoiceNumber} — {formatCurrency(item.grandTotal - (item.paidAmount || 0))} outstanding</option>)}</SelectField>
     <Field label="Amount" type="number" min="0.01" step="0.01" max={outstanding || undefined} required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
     <SelectField label="Payment method" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}><option>UPI</option><option>Bank transfer</option><option>Card</option><option>Cheque</option><option>Cash</option><option>Other</option></SelectField>
     <Field label="Payment date" type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} />
     <Field label="Transaction reference / notes" value={form.referenceNote} onChange={(e) => setForm({ ...form, referenceNote: e.target.value })} />
     <FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to record payment.')} />
-    <button className="button" disabled={mutation.isPending}>{mutation.isPending ? 'Recording...' : 'Record payment'}</button>
+    <button className="button" disabled={mutation.isPending || !invoice || !['Confirmed', 'Overdue'].includes(invoice.status)}>{mutation.isPending ? 'Recording...' : 'Record payment'}</button>
   </form></Modal>;
 }
 
@@ -213,9 +179,9 @@ export function ProductForm({ product, onClose }) {
     <Field label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}/>
     <Field label="Full description" className="sm:col-span-2"><textarea className="field min-h-20" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}/></Field>
     <div className="flex gap-4 sm:col-span-2">{[['isActive','Active'],['billingEligible','Eligible for billing']].map(([key,label])=><label className="flex items-center gap-2 text-sm" key={key}><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })}/>{label}</label>)}</div>
-    <Field label="Variants (JSON array)" className="sm:col-span-2"><textarea className="field min-h-24 font-mono text-xs" value={form.variants} onChange={(e) => setForm({ ...form, variants: e.target.value })} placeholder="[]" /></Field>
+    <VariantEditor value={JSON.parse(form.variants || '[]')} onChange={(variants) => setForm({ ...form, variants: JSON.stringify(variants) })} />
     <Field label="Tax components (JSON array; decimal rates)" className="sm:col-span-2"><textarea className="field min-h-20 font-mono text-xs" value={form.taxComponents} onChange={(e) => setForm({ ...form, taxComponents: e.target.value })} placeholder='[{"label":"Component A","rate":0.05}]' /></Field>
-    <div className="sm:col-span-2"><p className="field-hint">Each variant group uses a name and options with name, priceExtra, and optional SKU.</p>{variantError && <p className="error mt-2">{variantError}</p>}<FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save product.')}/><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save product' : 'Create product'}</button></div>
+    <div className="sm:col-span-2"><p className="field-hint">Variant price extras are added per unit. Historical invoice prices stay unchanged.</p>{variantError && <p className="error mt-2">{variantError}</p>}<FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save product.')}/><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save product' : 'Create product'}</button></div>
   </form></Modal>;
 }
 
@@ -227,7 +193,7 @@ export function PlanForm({ plan, onClose }) {
     maxQuantity: plan?.maxQuantity ?? '', trialDays: plan?.trialDays ?? 0, setupFee: plan?.setupFee ?? 0, includedUnits: plan?.includedUnits ?? 0, includedSeats: plan?.includedSeats ?? 0, overagePrice: plan?.overagePrice ?? 0, features: JSON.stringify(plan?.features || [], null, 2), isVisible: plan?.isVisible ?? true, isActive: plan?.isActive ?? true,
     description: plan?.description || '', availableFrom: plan?.availableFrom ? new Date(plan.availableFrom).toISOString().slice(0,10) : '',
     availableTo: plan?.availableTo ? new Date(plan.availableTo).toISOString().slice(0,10) : '',
-    allowPause: plan?.allowPause ?? true, allowEarlyClose: plan?.allowEarlyClose ?? true, allowRenew: plan?.allowRenew ?? true
+    autoCloseAtEnd: plan?.autoCloseAtEnd ?? false, allowPause: plan?.allowPause ?? true, allowEarlyClose: plan?.allowEarlyClose ?? true, allowRenew: plan?.allowRenew ?? true
   };
   const [form, setForm] = useState(initial);
   const [planError, setPlanError] = useState('');
@@ -257,7 +223,7 @@ export function PlanForm({ plan, onClose }) {
     <Field label="Available from" type="date" value={form.availableFrom} onChange={(e) => setForm({ ...form, availableFrom: e.target.value })}/>
     <Field label="Available until" type="date" value={form.availableTo} onChange={(e) => setForm({ ...form, availableTo: e.target.value })}/>
     <Field label="Description" className="sm:col-span-2"><textarea className="field min-h-20" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}/></Field>
-    <div className="flex flex-wrap gap-4 sm:col-span-2">{[['allowPause','Allow pause'],['allowEarlyClose','Allow early close'],['allowRenew','Allow renewal'],['isVisible','Visible to customers'],['isActive','Active']].map(([key,label])=><label key={key} className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })}/>{label}</label>)}</div>
+    <div className="flex flex-wrap gap-4 sm:col-span-2">{[['autoCloseAtEnd','Auto-close at subscription end'],['allowPause','Allow pause'],['allowEarlyClose','Allow early close'],['allowRenew','Allow renewal'],['isVisible','Visible to customers'],['isActive','Active']].map(([key,label])=><label key={key} className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })}/>{label}</label>)}</div>
     <div className="sm:col-span-2">{planError && <p className="error">{planError}</p>}<FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save plan.')}/><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save plan' : 'Create plan'}</button></div>
   </form></Modal>;
 }
@@ -265,13 +231,13 @@ export function PlanForm({ plan, onClose }) {
 export function BillingBatch({ onClose }) {
   const user = useAuthStore((state) => state.user);
   const [forceAllActive, setForceAllActive] = useState(false);
-  const mutation = useSubmit('/billing/run-batch', 'post', ['/invoices', '/subscriptions', 'metrics', 'notifications']);
-  const submit = (event) => { event.preventDefault(); mutation.mutate({ forceAllActive }, { onSuccess: onClose }); };
+  const mutation = useSubmit('/billing/run-batch', 'post', ['invoices', 'subscriptions', 'metrics', 'notifications']);
+  const submit = (event) => { event.preventDefault(); mutation.mutate({ forceAllActive }); };
   return <Modal title="Run recurring billing" onClose={onClose}><form onSubmit={submit} className="grid gap-4">
     <p className="text-sm text-slate-500">Generate invoices for active subscriptions whose billing date has arrived.</p>
     {user?.role === 'admin' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={forceAllActive} onChange={(e) => setForceAllActive(e.target.checked)} /> Force all active subscriptions</label>}
     <FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Billing batch failed.')} />
-    {mutation.data?.data && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{mutation.data.data.message}</p>}
+    {mutation.data?.data && <section className="billing-preview" aria-live="polite"><strong>{mutation.data.data.message}</strong><p>{mutation.data.data.skippedCount} skipped | {mutation.data.data.recoveredCount} recovered | {mutation.data.data.failedCount} failed | {mutation.data.data.catchUpPendingCount} awaiting catch-up</p>{mutation.data.data.invoices?.map((invoice) => <a className="inline-action" key={invoice._id} href={`/app/invoices/${invoice._id}`}>{invoice.invoiceNumber}</a>)}{mutation.data.data.failed?.map((failure) => <p className="error" key={failure.subNumber}>{failure.subNumber}: {failure.error}</p>)}{mutation.data.data.failedCount > 0 && <p>Retry the batch after resolving failures. Existing billing periods are protected against duplicate invoices.</p>}</section>}
     <button className="button" disabled={mutation.isPending}>{mutation.isPending ? 'Running...' : 'Run billing batch'}</button>
   </form></Modal>;
 }
@@ -304,7 +270,8 @@ export function useTableFilters(rows, initialSearch = '') {
   const [status, setStatus] = useState('ALL');
   const filtered = useMemo(() => rows.filter((row) => {
     const text = JSON.stringify(row).toLowerCase();
-    return (!search || text.includes(search.toLowerCase())) && (!status || status === 'ALL' || (row.status || row.accountStatus) === status);
+    const rowStatus = row.status || row.accountStatus || (typeof row.isActive === 'boolean' ? row.isActive ? 'Active' : 'Inactive' : '');
+    return (!search || text.includes(search.toLowerCase())) && (!status || status === 'ALL' || rowStatus === status);
   }), [rows, search, status]);
   return { search, setSearch, status, setStatus, filtered };
 }

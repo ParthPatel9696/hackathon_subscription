@@ -20,3 +20,5 @@ Thumbs.db
 # Frontend build output
 client/node_modules/
 client/dist/
+client/test-results/
+client/playwright-report/

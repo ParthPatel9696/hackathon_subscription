@@ -1,6 +1,7 @@
 const Subscription = require('../models/Subscription');
 const Product = require('../models/Product');
 const Plan = require('../models/Plan');
+const QuotationTemplate = require('../models/QuotationTemplate');
 const User = require('../models/User');
 const WorkspaceSettings = require('../models/WorkspaceSettings');
 const mongoose = require('mongoose');
@@ -14,6 +15,8 @@ const crypto = require('crypto');
 const { recordAudit } = require('../services/auditService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
 const { normalizePaymentTerms } = require('../utils/paymentTerms');
+const { renderInvoicePdf } = require('../services/invoicePdf');
+const { sendQuotation } = require('../services/mailer');
 
 // Valid state transitions map
 const VALID_TRANSITIONS = {
@@ -22,7 +25,7 @@ const VALID_TRANSITIONS = {
   Confirmed: ['Active', 'Cancelled'],
   Active: ['Paused', 'Closed'],
   Paused: ['Active', 'Closed'],
-  Closed: ['Draft'], // Renew / Reopen creates or resets
+  Closed: [], // Renewals use the plan-flagged renewal operation.
 };
 
 // GET /api/subscriptions
@@ -184,6 +187,11 @@ exports.transitionState = async (req, res) => {
         error: `Invalid lifecycle transition from ${sub.status} to ${targetStatus}. Allowed: ${allowed.join(', ') || 'None'}`
       });
     }
+    if (targetStatus === 'Paused' || targetStatus === 'Closed') {
+      const plan = await Plan.findById(sub.plan).select('allowPause allowEarlyClose');
+      if (targetStatus === 'Paused' && plan?.allowPause === false) return res.status(409).json({ success: false, error: 'This plan does not allow pausing.' });
+      if (targetStatus === 'Closed' && ['Active', 'Paused'].includes(sub.status) && plan?.allowEarlyClose === false) return res.status(409).json({ success: false, error: 'This plan does not allow early closure.' });
+    }
     if (sub.status === 'Quotation' && targetStatus === 'Confirmed' && sub.quotationValidUntil && new Date(sub.quotationValidUntil) < new Date()) return res.status(409).json({ success: false, error: 'This quotation has expired and cannot be confirmed. Mark it expired or create a new quotation.' });
     if (sub.status === 'Quotation' && targetStatus === 'Expired' && sub.quotationValidUntil && new Date(sub.quotationValidUntil) >= new Date()) return res.status(409).json({ success: false, error: 'This quotation has not reached its expiry date.' });
 
@@ -192,7 +200,12 @@ exports.transitionState = async (req, res) => {
     const set = { ...update };
     if (['Closed', 'Cancelled', 'Expired'].includes(targetStatus)) set.closedAt = new Date();
     if (targetStatus === 'Active') set.closedAt = null;
-    if (targetStatus === 'Active') update.nextBillingDate = advanceBillingDate(new Date(), sub.billingFrequency);
+    if (targetStatus === 'Active') {
+      const resumedAt = new Date();
+      set.nextBillingDate = advanceBillingDate(resumedAt, sub.billingFrequency);
+      // Resume from a fresh billing period: paused time must not become catch-up charges.
+      if (sub.status === 'Paused') set.lastInvoicedDate = resumedAt;
+    }
     if (reason) set.notes = (sub.notes ? `${sub.notes} | ` : '') + `State changed to ${targetStatus}: ${String(reason).slice(0, 500)}`;
     const updated = await Subscription.findOneAndUpdate({ _id: sub._id, status: sub.status }, { $set: set, $push: { statusHistory: { eventType: 'status_change', previousStatus: sub.status, status: targetStatus, previousNetRecurringMinor: netRecurringMinor, netRecurringMinor, billingFrequency: sub.billingFrequency, previousBillingFrequency: sub.billingFrequency, effectiveAt: new Date(), actor: req.user._id, reason: String(reason || '').slice(0, 500) } } }, { new: true, runValidators: true });
     if (!updated) return res.status(409).json({ success: false, error: 'Subscription status changed. Refresh and try again.' });
@@ -210,6 +223,31 @@ exports.transitionState = async (req, res) => {
   }
 };
 
+exports.renewSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ success: false, error: 'Invalid subscription id.' });
+    const sub = await Subscription.findById(id);
+    if (!sub) return res.status(404).json({ success: false, error: 'Subscription not found.' });
+    if (sub.status !== 'Closed') return res.status(409).json({ success: false, error: 'Only closed subscriptions can be renewed.' });
+    const plan = await Plan.findById(sub.plan).select('allowRenew');
+    if (!plan || plan.allowRenew === false) return res.status(409).json({ success: false, error: 'This plan does not allow renewal.' });
+    const now = new Date();
+    const currentEnd = new Date(Math.max(new Date(sub.expiryDate).getTime(), now.getTime()));
+    const expiryDate = advanceBillingDate(currentEnd, sub.billingFrequency);
+    const updated = await Subscription.findOneAndUpdate({ _id: sub._id, status: 'Closed' }, {
+      $set: { status: 'Active', closedAt: null, expiryDate, nextBillingDate: now },
+      $push: { statusHistory: { eventType: 'status_change', previousStatus: 'Closed', status: 'Active', netRecurringMinor: Math.max(0, (sub.subtotalMinor ?? toMinor(sub.subtotal || 0)) - (sub.discountTotalMinor ?? toMinor(sub.discountTotal || 0))), billingFrequency: sub.billingFrequency, effectiveAt: now, actor: req.user._id, reason: 'Subscription renewed.' } }
+    }, { new: true, runValidators: true });
+    if (!updated) return res.status(409).json({ success: false, error: 'Subscription changed while it was being renewed.' });
+    recordAudit({ actor: req.user, action: 'subscription_renewed', resourceType: 'Subscription', resourceId: updated._id, customer: updated.customer, previousValue: { status: 'Closed', expiryDate: sub.expiryDate }, newValue: { status: 'Active', expiryDate: updated.expiryDate } }).catch(() => {});
+    return res.json({ success: true, data: updated, message: 'Subscription renewed.' });
+  } catch (error) {
+    const status = error.statusCode || (error instanceof TypeError ? 400 : 500);
+    return res.status(status).json({ success: false, error: status === 500 ? 'Unable to renew this subscription.' : error.message });
+  }
+};
+
 // POST /api/subscriptions
 exports.createSubscription = async (req, res) => {
   try {
@@ -221,11 +259,25 @@ exports.createSubscription = async (req, res) => {
       planName,
       billingFrequency,
       lines,
+      templateId,
       paymentTerms,
       discountCode
     } = req.body;
 
-    if (!Array.isArray(lines) || lines.length === 0 || lines.length > 100) {
+    let quotationValidityDays = 15;
+    let requestedLines = lines;
+    let requestedPlanId = planId;
+    if (templateId !== undefined) {
+      if (!mongoose.isValidObjectId(templateId)) return res.status(400).json({ success: false, error: 'Choose a valid quotation template.' });
+      const template = await QuotationTemplate.findOne({ _id: templateId, isActive: true }).lean();
+      if (!template) return res.status(400).json({ success: false, error: 'This quotation template is no longer available.' });
+      if (requestedPlanId && String(requestedPlanId) !== String(template.plan)) return res.status(400).json({ success: false, error: 'The selected plan does not match this quotation template.' });
+      requestedPlanId = template.plan;
+      requestedLines = lines === undefined ? template.lines.map((line) => ({ productId: line.product, quantity: line.quantity, variantName: line.variantName })) : lines;
+      quotationValidityDays = template.validityDays;
+    }
+
+    if (!Array.isArray(requestedLines) || requestedLines.length === 0 || requestedLines.length > 100) {
       return res.status(400).json({ success: false, error: 'A quotation must include between one and one hundred lines.' });
     }
 
@@ -236,16 +288,20 @@ exports.createSubscription = async (req, res) => {
       return res.status(400).json({ success: false, error: 'A valid customer is required.' });
     }
 
-    const plan = planId && mongoose.isValidObjectId(planId)
-      ? await Plan.findById(planId)
+    const plan = requestedPlanId && mongoose.isValidObjectId(requestedPlanId)
+      ? await Plan.findById(requestedPlanId)
       : planName
         ? await Plan.findOne({ name: planName })
         : null;
     if (!plan) {
       return res.status(400).json({ success: false, error: 'A valid plan is required.' });
     }
+    const quotingAt = new Date();
+    if (plan.isActive === false || plan.availableFrom && plan.availableFrom > quotingAt || plan.availableTo && plan.availableTo < quotingAt) {
+      return res.status(409).json({ success: false, error: 'This plan is not currently available for new quotations.' });
+    }
 
-    const baseLines = await Promise.all((lines || []).map(async line => {
+    const baseLines = await Promise.all(requestedLines.map(async line => {
       const product = line.productId && mongoose.isValidObjectId(line.productId)
         ? await Product.findById(line.productId)
         : line.productName
@@ -254,6 +310,7 @@ exports.createSubscription = async (req, res) => {
       if (!product) {
         throw new TypeError('Every subscription line must reference a valid product.');
       }
+      if (product.isActive === false || product.billingEligible === false) throw new TypeError(`${product.name} is unavailable for new quotations.`);
       if (!Number.isFinite(product.taxRate)) throw Object.assign(new Error(`Tax configuration is missing for ${product.name}. An administrator must review its legacy tax treatment before quoting.`), { statusCode: 409 });
 
       let variantPriceExtra = 0;
@@ -262,7 +319,7 @@ exports.createSubscription = async (req, res) => {
           .flatMap(group => group.options)
           .find(option => option.name === line.variantName ||
             line.variantName.startsWith(`${option.name} (`));
-        if (!variantOption) {
+        if (!variantOption || variantOption.isActive === false) {
           throw new TypeError(`Invalid variant "${line.variantName}" for ${product.name}.`);
         }
         variantPriceExtra = variantOption.priceExtra;
@@ -291,6 +348,8 @@ exports.createSubscription = async (req, res) => {
         unitPrice,
         unitPriceMinor: calculation.unitPriceMinor,
         taxRate: product.taxRate,
+        taxLabel: product.taxLabel,
+        taxComponents: product.taxComponents,
         subtotalMinor: calculation.subtotalMinor
       };
     }));
@@ -362,6 +421,8 @@ exports.createSubscription = async (req, res) => {
         unitPrice: line.unitPrice,
         unitPriceMinor: calculation.unitPriceMinor,
         taxRate: line.taxRate,
+        taxLabel: line.taxLabel,
+        taxComponents: line.taxComponents,
         taxAmount: fromMinor(calculation.taxMinor),
         taxMinor: calculation.taxMinor,
         discountAmount: fromMinor(calculation.discountMinor),
@@ -388,7 +449,7 @@ exports.createSubscription = async (req, res) => {
       customer: customer._id,
       customerName: customer.companyName || customer.name,
       customerEmail: customer.email,
-      plan: planId,
+      plan: plan._id,
       planName: plan.name,
       billingFrequency: plan.billingFrequency,
       startDate,
@@ -411,7 +472,7 @@ exports.createSubscription = async (req, res) => {
       recurringTotalMinor,
       status: 'Quotation',
       statusHistory: [{ eventType: 'created', previousStatus: null, status: 'Quotation', netRecurringMinor: Math.max(0, subtotalMinor - discountTotalMinor), billingFrequency: plan.billingFrequency, effectiveAt: new Date(), actor: req.user._id }],
-      quotationValidUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000) // 15 days
+      quotationValidUntil: new Date(Date.now() + quotationValidityDays * 24 * 60 * 60 * 1000)
     });
 
     if (discount) await reserveDiscountUsage(discount._id);
@@ -426,5 +487,91 @@ exports.createSubscription = async (req, res) => {
   } catch (err) {
     const status = err.statusCode || (err instanceof TypeError || ['ValidationError', 'CastError'].includes(err.name) ? 400 : 500);
     res.status(status).json({ success: false, error: status === 400 ? err.message : 'Unable to create subscription draft.' });
+  }
+};
+
+async function quotationPdfData(subscription) {
+  const [customer, workspace] = await Promise.all([
+    User.findById(subscription.customer).select('name companyName billingContactName billingAddress billingAddressLine2 billingCity billingState billingPostalCode billingCountry taxId').lean(),
+    WorkspaceSettings.findOne({ key: 'default' }).lean()
+  ]);
+  return {
+    invoiceNumber: subscription.subscriptionNumber,
+    subscriptionNumber: subscription.subscriptionNumber,
+    customerName: subscription.customerName,
+    customerEmail: subscription.customerEmail,
+    companySnapshot: workspace ? { name: workspace.legalName || workspace.companyName, displayName: workspace.companyName, email: workspace.email || '', phone: workspace.phone || '', address: workspace.registeredAddress || '', taxId: workspace.taxId || '' } : { name: 'Brightloop' },
+    billingAddressSnapshot: customer ? { name: customer.billingContactName || customer.companyName || customer.name, line1: customer.billingAddress || '', line2: customer.billingAddressLine2 || '', city: customer.billingCity || '', state: customer.billingState || '', postalCode: customer.billingPostalCode || '', country: customer.billingCountry || 'India', taxId: customer.taxId || '' } : {},
+    invoiceDate: subscription.createdAt,
+    dueDate: subscription.quotationValidUntil || subscription.expiryDate,
+    billingPeriodStart: subscription.startDate,
+    billingPeriodEnd: subscription.expiryDate,
+    lines: (subscription.lines || []).map((line) => ({ ...line, unitPrice: line.unitPrice + (line.variantPriceExtra || 0), total: line.lineTotal })),
+    subtotal: subscription.subtotal,
+    discountTotal: subscription.discountTotal,
+    taxTotal: subscription.taxTotal,
+    grandTotal: subscription.recurringTotal,
+    status: subscription.status,
+    paymentTerms: subscription.paymentTerms,
+    billingFrequency: subscription.billingFrequency
+  };
+}
+
+exports.downloadQuotationPdf = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid quotation id.' });
+    const filter = { _id: req.params.id };
+    if (req.user.role === 'customer') filter.customer = req.user._id;
+    const quote = await Subscription.findOne(filter).lean();
+    if (!quote || !['Quotation', 'Confirmed', 'Active', 'Cancelled', 'Expired'].includes(quote.status)) return res.status(404).json({ success: false, error: 'Quotation not found.' });
+    const document = await quotationPdfData(quote);
+    const pdf = await renderInvoicePdf(document, { title: 'QUOTATION', validUntilLabel: 'Valid until', totalLabel: `Recurring / ${quote.billingFrequency}` });
+    const filename = `${String(quote.subscriptionNumber).replace(/[^a-zA-Z0-9_-]/g, '')}-quotation.pdf`;
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Length': pdf.length, 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'private, no-store' });
+    return res.send(pdf);
+  } catch {
+    return res.status(500).json({ success: false, error: 'Unable to generate this quotation PDF.' });
+  }
+};
+
+exports.sendQuotationEmail = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid quotation id.' });
+    const quote = await Subscription.findById(req.params.id).lean();
+    if (!quote) return res.status(404).json({ success: false, error: 'Quotation not found.' });
+    if (quote.status !== 'Quotation') return res.status(409).json({ success: false, error: 'Only open quotations can be sent.' });
+    if (quote.quotationValidUntil && new Date(quote.quotationValidUntil) < new Date()) return res.status(409).json({ success: false, error: 'This quotation has expired and cannot be sent.' });
+    if (!quote.customerEmail) return res.status(409).json({ success: false, error: 'This quotation has no customer email address.' });
+    const document = await quotationPdfData(quote);
+    const pdf = await renderInvoicePdf(document, { title: 'QUOTATION', validUntilLabel: 'Valid until', totalLabel: `Recurring / ${quote.billingFrequency}` });
+    const sent = await sendQuotation({ to: quote.customerEmail, quotation: { ...document, ...quote }, pdfBuffer: pdf });
+    if (!sent) return res.status(503).json({ success: false, error: 'Quotation email is not configured. Set SMTP_HOST and sender credentials.' });
+    recordAudit({ actor: req.user, action: 'quotation_emailed', resourceType: 'Subscription', resourceId: quote._id, customer: quote.customer, newValue: { status: quote.status }, metadata: { subscriptionNumber: quote.subscriptionNumber, recipient: quote.customerEmail } }).catch(() => {});
+    return res.json({ success: true, message: `Quotation sent to ${quote.customerEmail}.` });
+  } catch {
+    return res.status(502).json({ success: false, error: 'Quotation delivery failed. Check SMTP configuration and retry.' });
+  }
+};
+
+exports.respondToQuotation = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid quotation id.' });
+    const decision = req.body?.decision;
+    if (!['accept', 'reject'].includes(decision)) return res.status(400).json({ success: false, error: 'Choose accept or reject.' });
+    const quote = await Subscription.findOne({ _id: req.params.id, customer: req.user._id, status: 'Quotation' });
+    if (!quote) return res.status(404).json({ success: false, error: 'Open quotation not found.' });
+    const now = new Date();
+    if (quote.quotationValidUntil && quote.quotationValidUntil < now) return res.status(409).json({ success: false, error: 'This quotation has expired.' });
+    const nextStatus = decision === 'accept' ? 'Confirmed' : 'Cancelled';
+    const updated = await Subscription.findOneAndUpdate({ _id: quote._id, customer: req.user._id, status: 'Quotation' }, {
+      $set: { status: nextStatus, ...(decision === 'reject' ? { closedAt: now } : {}) },
+      $push: { statusHistory: { eventType: 'status_change', previousStatus: 'Quotation', status: nextStatus, netRecurringMinor: Math.max(0, (quote.subtotalMinor ?? toMinor(quote.subtotal || 0)) - (quote.discountTotalMinor ?? toMinor(quote.discountTotal || 0))), billingFrequency: quote.billingFrequency, effectiveAt: now, actor: req.user._id, reason: decision === 'accept' ? 'Accepted by customer.' : 'Declined by customer.' } }
+    }, { new: true, runValidators: true });
+    if (!updated) return res.status(409).json({ success: false, error: 'Quotation status changed. Refresh and try again.' });
+    if (decision === 'reject' && quote.discount) await releaseDiscountUsage(quote.discount);
+    recordAudit({ actor: req.user, action: decision === 'accept' ? 'quotation_accepted' : 'quotation_declined', resourceType: 'Subscription', resourceId: updated._id, customer: updated.customer, previousValue: { status: 'Quotation' }, newValue: { status: updated.status } }).catch(() => {});
+    return res.json({ success: true, data: updated, message: decision === 'accept' ? 'Quotation accepted. The Brightloop team will activate the subscription.' : 'Quotation declined.' });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Unable to update this quotation.' });
   }
 };

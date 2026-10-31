@@ -1,6 +1,7 @@
 const Subscription = require('../models/Subscription');
 const Invoice = require('../models/Invoice');
 const User = require('../models/User');
+const Payment = require('../models/Payment');
 const { toMinor, fromMinor, normalizeMonthlyMinor } = require('../utils/money');
 
 // GET /api/dashboard/metrics
@@ -30,7 +31,7 @@ exports.getFinanceMetrics = async (req, res) => {
       }
     });
 
-    const activeSubscriptions = await Subscription.find({ status: 'Active' }).select('recurringTotal recurringTotalMinor subtotal subtotalMinor taxTotal taxTotalMinor discountTotal discountTotalMinor billingFrequency');
+    const activeSubscriptions = await Subscription.find({ status: 'Active' }).select('recurringTotal recurringTotalMinor subtotal subtotalMinor taxTotal taxTotalMinor discountTotal discountTotalMinor billingFrequency').lean();
     activeSubscriptions.forEach(subscription => {
       const recurringMinor = subscription.recurringTotalMinor ?? toMinor(subscription.recurringTotal);
       const taxMinor = subscription.taxTotalMinor ?? toMinor(subscription.taxTotal || 0);
@@ -47,10 +48,10 @@ exports.getFinanceMetrics = async (req, res) => {
         { status: 'Overdue' },
         { status: 'Confirmed', dueDate: { $lt: today } }
       ] }),
-      Invoice.aggregate([
-        { $match: { status: { $ne: 'Cancelled' } } },
+      Payment.aggregate([
+        { $match: { $or: [{ status: 'posted' }, { status: { $exists: false } }] } },
         { $project: {
-          paidMinor: { $ifNull: ['$paidAmountMinor', { $multiply: [{ $ifNull: ['$paidAmount', 0] }, 100] }] }
+          paidMinor: { $ifNull: ['$amountMinor', { $round: [{ $multiply: [{ $ifNull: ['$amount', 0] }, 100] }, 0] }] }
         } },
         { $group: { _id: null, total: { $sum: '$paidMinor' } } }
       ])
@@ -108,6 +109,7 @@ exports.getFinanceMetrics = async (req, res) => {
       },
       metrics: {
         mrr: fromMinor(mrrMinor),
+        arr: fromMinor(mrrMinor * 12),
         activeSubscriptionsCount: statusCounts.Active,
         overdueCount,
         overdueAmount: fromMinor(overdueSumMinor),

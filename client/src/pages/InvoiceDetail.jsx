@@ -1,17 +1,44 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../api';
 import PageHeader from '../components/PageHeader';
-import { formatCurrency, formatDate } from '../utils/locale';
+import { formatCurrency, formatDate, invoiceOutstanding } from '../utils/locale';
+import { InvoiceStatusForm, PaymentForm } from '../components/WorkflowForms';
+import { useAuthStore } from '../store';
 
 export default function InvoiceDetail() {
   const { id } = useParams();
+  const role = useAuthStore((state) => state.user?.role);
+  const [actionMessage, setActionMessage] = useState('');
+  const [editingStatus, setEditingStatus] = useState(false);
+  const [recordingPayment, setRecordingPayment] = useState(false);
   const query = useQuery({ queryKey: ['invoice-detail', id], queryFn: async () => (await api.get(`/invoices/${id}`)).data.data });
+  const sendInvoice = useMutation({ mutationFn: async () => (await api.post(`/invoices/${id}/send`)).data, onSuccess: (result) => setActionMessage(result.message || 'Invoice sent.') });
+  const downloadPdf = async () => {
+    setActionMessage('');
+    try {
+      const { data } = await api.get(`/invoices/${id}/pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${query.data?.invoiceNumber || 'invoice'}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch { setActionMessage('Unable to download this invoice PDF.'); }
+  };
   if (query.isLoading) return <p className="card" role="status">Loading invoice…</p>;
   if (query.isError || !query.data) return <p className="error" role="alert">{query.error?.response?.data?.error || 'Invoice is unavailable.'} <button className="inline-action" onClick={() => query.refetch()}>Try again</button></p>;
   const invoice = query.data;
-  const due = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.paidAmount || 0));
+  const due = invoiceOutstanding(invoice);
   return <>
+    {['admin', 'staff'].includes(role) && <div className="mb-3 flex flex-wrap gap-2 print-hidden">{!['Paid', 'Cancelled'].includes(invoice.status) && <button className="button secondary-button" onClick={() => setEditingStatus(true)}>Update invoice status</button>}{['Confirmed', 'Overdue'].includes(invoice.status) && due > 0 && <button className="button" onClick={() => setRecordingPayment(true)}>Record payment</button>}</div>}
+    {editingStatus && <InvoiceStatusForm invoice={invoice} onClose={() => { setEditingStatus(false); query.refetch(); }} />}
+    {recordingPayment && <PaymentForm initialInvoice={invoice} onClose={() => { setRecordingPayment(false); query.refetch(); }} />}
+    <div className="mb-4 flex flex-wrap gap-2 print-hidden"><button className="button secondary-button" onClick={downloadPdf}>Download PDF</button>{['admin', 'staff'].includes(role) && <button className="button" disabled={sendInvoice.isPending || !['Confirmed', 'Overdue', 'Paid'].includes(invoice.status)} onClick={() => { setActionMessage(''); sendInvoice.mutate(); }}>{sendInvoice.isPending ? 'Sending...' : 'Email invoice'}</button>}</div>
+    {(actionMessage || sendInvoice.isError) && <p className={`mb-4 ${sendInvoice.isError || actionMessage.startsWith('Unable') ? 'error' : 'success-message'}`} role="status">{sendInvoice.error?.response?.data?.error || actionMessage}</p>}
     <Link to="/app/invoices" className="back-link">← Invoices</Link>
     <div className="flex flex-wrap items-start justify-between gap-3"><PageHeader title={invoice.invoiceNumber} subtitle={`${invoice.customerName} · ${invoice.status}`} /><button className="button secondary-button print-hidden" onClick={() => window.print()}>Print / save PDF</button></div>
     <section className="card mb-4"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Info label="Issue date" value={formatDate(invoice.invoiceDate)} /><Info label="Due date" value={formatDate(invoice.dueDate)} /><Info label="Billing period" value={`${formatDate(invoice.billingPeriodStart)} – ${formatDate(invoice.billingPeriodEnd)}`} /><Info label="Payment terms" value={invoice.paymentTerms || 'Not specified'} /><Info label="Customer" value={invoice.customerName} /><Info label="Email" value={invoice.customerEmail} /><Info label="Subscription" value={invoice.subscriptionNumber} /><Info label="Status" value={invoice.status} /></div><div className="mt-4 grid gap-5 border-t pt-4 text-sm text-slate-600 sm:grid-cols-2"><div><strong>Company details snapshot</strong><p>{invoice.companySnapshot?.name || invoice.companySnapshot?.displayName || 'Brightloop'}</p><p>{invoice.companySnapshot?.address}</p><p>{[invoice.companySnapshot?.email, invoice.companySnapshot?.phone, invoice.companySnapshot?.taxId].filter(Boolean).join(' · ')}</p></div><div><strong>Billing address snapshot</strong><p>{[invoice.billingAddressSnapshot?.name, invoice.billingAddressSnapshot?.line1, invoice.billingAddressSnapshot?.line2, invoice.billingAddressSnapshot?.city, invoice.billingAddressSnapshot?.state, invoice.billingAddressSnapshot?.postalCode, invoice.billingAddressSnapshot?.country, invoice.billingAddressSnapshot?.taxId].filter(Boolean).join(' · ') || 'Address not captured for this historical invoice.'}</p></div></div></section>

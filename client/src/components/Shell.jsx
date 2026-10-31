@@ -10,7 +10,7 @@ const sections = [
   { title: 'Overview', links: [['/app/dashboard', 'Dashboard', LayoutDashboard, ['admin', 'staff', 'customer']]] },
   { title: 'Business', links: [
     ['/app/customers', 'Customers', Users, ['admin', 'staff']], ['/app/products', 'Products', Package, ['admin', 'staff']], ['/app/plans', 'Plans', Tags, ['admin', 'staff', 'customer']],
-    ['/app/quotations', 'Quotations', FileText, ['admin', 'staff']], ['/app/subscriptions', 'Subscriptions', Wallet, ['admin', 'staff', 'customer']], ['/app/subscription-requests', 'Requests', ClipboardList, ['admin', 'staff', 'customer']]
+    ['/app/quotations', 'Quotations', FileText, ['admin', 'staff']], ['/app/quotation-templates', 'Quote templates', ClipboardList, ['admin']], ['/app/subscriptions', 'Subscriptions', Wallet, ['admin', 'staff', 'customer']], ['/app/subscription-requests', 'Requests', ClipboardList, ['admin', 'staff', 'customer']]
   ] },
   { title: 'Finance', links: [
     ['/app/invoices', 'Invoices', FileText, ['admin', 'staff', 'customer']], ['/app/payments', 'Payments', CreditCard, ['admin', 'staff', 'customer']],
@@ -86,7 +86,7 @@ export default function Shell() {
 
   const activeLabel = useMemo(() => sections.flatMap((section) => section.links).find(([to]) => location.pathname === to || location.pathname.startsWith(`${to}/`))?.[1] || 'Dashboard', [location.pathname]);
   const logout = async () => {
-    try { await api.post('/auth/logout'); } finally { clearSession(); queryClient.removeQueries({ queryKey: ['current-user'] }); queryClient.removeQueries({ queryKey: ['notifications'] }); navigate('/login'); }
+    try { await api.post('/auth/logout'); } finally { clearSession(); queryClient.clear(); navigate('/login'); }
   };
   const toggleCollapsed = () => setCollapsed((value) => {
     localStorage.setItem('brightloop_sidebar', value ? 'expanded' : 'collapsed');

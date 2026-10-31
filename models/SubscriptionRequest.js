@@ -7,7 +7,7 @@ const subscriptionRequestSchema = new mongoose.Schema({
   targetPlan: { type: mongoose.Schema.Types.ObjectId, ref: 'Plan', default: null },
   targetQuantity: { type: Number, min: 1, default: null },
   message: { type: String, maxlength: 2000, default: '' },
-  status: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending', index: true },
+  status: { type: String, enum: ['Pending', 'Processing', 'Approved', 'Rejected'], default: 'Pending', index: true },
   reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   reviewedAt: { type: Date, default: null },
   reviewNote: { type: String, maxlength: 2000, default: '' },

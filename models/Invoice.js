@@ -70,5 +70,7 @@ invoiceSchema.index(
   { subscription: 1, billingPeriodStart: 1, billingPeriodEnd: 1 },
   { unique: true, partialFilterExpression: { billingPeriodStart: { $exists: true }, billingPeriodEnd: { $exists: true } } }
 );
+invoiceSchema.index({ customer: 1, createdAt: -1 });
+invoiceSchema.index({ status: 1, dueDate: 1 });
 
 module.exports = mongoose.model('Invoice', invoiceSchema);

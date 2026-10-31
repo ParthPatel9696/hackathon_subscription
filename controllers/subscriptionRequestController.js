@@ -3,6 +3,7 @@ const SubscriptionRequest = require('../models/SubscriptionRequest');
 const Subscription = require('../models/Subscription');
 const Plan = require('../models/Plan');
 const { recordAudit } = require('../services/auditService');
+const subscriptionController = require('./subscriptionController');
 
 exports.create = async (req, res) => {
   try {
@@ -52,8 +53,46 @@ exports.review = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid request id.' });
   const { status, reviewNote = '' } = req.body;
   if (!['Approved', 'Rejected'].includes(status) || typeof reviewNote !== 'string' || reviewNote.length > 2000) return res.status(400).json({ success: false, error: 'Choose Approved or Rejected and provide a valid review note.' });
-  const request = await SubscriptionRequest.findOneAndUpdate({ _id: req.params.id, status: 'Pending' }, { $set: { status, reviewNote: reviewNote.trim(), reviewedBy: req.user._id, reviewedAt: new Date() } }, { new: true, runValidators: true }).populate('customer', 'name email').populate('subscription', 'subscriptionNumber').populate('targetPlan', 'name code');
-  if (!request) return res.status(409).json({ success: false, error: 'Request is no longer pending.' });
+  const claimed = await SubscriptionRequest.findOneAndUpdate({ _id: req.params.id, status: 'Pending' }, { $set: { status: status === 'Approved' ? 'Processing' : 'Rejected', reviewNote: reviewNote.trim(), reviewedBy: req.user._id, reviewedAt: new Date() } }, { new: true, runValidators: true });
+  if (!claimed) return res.status(409).json({ success: false, error: 'Request is no longer pending.' });
+
+  if (status === 'Approved') {
+    try {
+      const subscription = await Subscription.findById(claimed.subscription).populate('plan', 'allowEarlyClose product');
+      if (!subscription || subscription.customer.toString() !== claimed.customer.toString()) throw new Error('The linked subscription is no longer available.');
+      const runController = async (handler, body) => {
+        const result = { statusCode: 200, payload: null, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+        await handler({ params: { id: String(subscription._id) }, body, user: req.user }, result);
+        if (result.statusCode >= 400) throw Object.assign(new Error(result.payload?.error || 'The requested subscription change could not be applied.'), { statusCode: result.statusCode });
+      };
+      if (claimed.requestType === 'plan_change' || claimed.requestType === 'quantity_change') {
+        if (subscription.status !== 'Active') throw new Error('Only active subscriptions can apply an approved change request.');
+        const currentLine = subscription.plan?.product
+          ? subscription.lines.find((line) => String(line.product) === String(subscription.plan.product))
+          : subscription.lines[0];
+        if (!currentLine) throw new Error('The subscription product line is no longer available.');
+        const targetPlanId = claimed.requestType === 'plan_change' ? claimed.targetPlan : subscription.plan._id;
+        if (!targetPlanId) throw new Error('The requested plan is no longer available.');
+        await runController(subscriptionController.changePlan, {
+          planId: targetPlanId,
+          quantity: claimed.targetQuantity || currentLine.quantity,
+          timing: 'next_cycle',
+          reason: `Approved customer request: ${claimed.message.slice(0, 300)}`
+        });
+      } else if (claimed.requestType === 'cancellation') {
+        if (subscription.status !== 'Active' || subscription.plan?.allowEarlyClose === false) throw new Error('This plan does not allow early cancellation.');
+        await runController(subscriptionController.transitionState, {
+          id: String(subscription._id), targetStatus: 'Closed',
+          reason: `Approved customer cancellation request: ${claimed.message.slice(0, 300)}`
+        });
+      }
+      await SubscriptionRequest.updateOne({ _id: claimed._id, status: 'Processing' }, { $set: { status: 'Approved' } });
+    } catch (error) {
+      await SubscriptionRequest.updateOne({ _id: claimed._id, status: 'Processing' }, { $set: { status: 'Pending', reviewedBy: null, reviewedAt: null, reviewNote: '' } });
+      return res.status(error.statusCode || 409).json({ success: false, error: `Request was not approved: ${error.message}` });
+    }
+  }
+  const request = await SubscriptionRequest.findById(claimed._id).populate('customer', 'name email').populate('subscription', 'subscriptionNumber planName status scheduledPlanChange').populate('targetPlan', 'name code');
   recordAudit({ actor: req.user, action: 'subscription_request_reviewed', resourceType: 'SubscriptionRequest', resourceId: request._id, customer: request.customer?._id, previousValue: { status: 'Pending' }, newValue: { status, requestType: request.requestType }, metadata: { reviewNote: request.reviewNote } }).catch(() => {});
   res.json({ success: true, data: request });
 };

@@ -133,6 +133,8 @@ const subscriptionSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-subscriptionSchema.index({ 'scheduledPlanChange.operationKey': 1 }, { unique: true, partialFilterExpression: { 'scheduledPlanChange.operationKey': { $type: 'string' } } });
+subscriptionSchema.index({ 'scheduledPlanChange.operationKey': 1 }, { name: 'scheduled_plan_change_operation_key_unique_v2', unique: true, partialFilterExpression: { 'scheduledPlanChange.operationKey': { $type: 'string' } } });
+subscriptionSchema.index({ status: 1, nextBillingDate: 1 });
+subscriptionSchema.index({ customer: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Subscription', subscriptionSchema);

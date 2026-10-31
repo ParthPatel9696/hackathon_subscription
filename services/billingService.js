@@ -7,6 +7,8 @@ const { nextBusinessIdentifier } = require('./identifierService');
 const { fromMinor, toMinor } = require('../utils/money');
 const { paymentTermsDays } = require('../utils/paymentTerms');
 
+const MAX_CATCH_UP_PERIODS_PER_SUBSCRIPTION = 120;
+
 const advanceBillingDate = (date, frequency) => {
   const nextDate = new Date(date);
   if (!Number.isFinite(nextDate.getTime())) throw new TypeError('Billing date must be valid.');
@@ -114,7 +116,7 @@ async function makeInvoiceDocument(subscription, period, now) {
     discountTotalMinor,
     grandTotal: subscription.recurringTotal,
     grandTotalMinor,
-    status: 'Confirmed',
+    status: 'Draft',
     paymentTerms: subscription.paymentTerms
   };
 }
@@ -213,13 +215,35 @@ const runRecurringBilling = async ({ forceAllActive = false, actorRole, now = ne
   const createdInvoices = [];
   const skippedSubscriptions = [];
   const recoveredSubscriptions = [];
+  const failedSubscriptions = [];
+  const catchUpPending = [];
   for (const subscription of subscriptions) {
-    const outcome = await billOne(subscription._id, now, forceAllActive, useTransactions);
-    if (outcome.skipped) skippedSubscriptions.push({ subNumber: subscription.subscriptionNumber, reason: outcome.reason });
-    else if (outcome.recovered) recoveredSubscriptions.push({ subNumber: subscription.subscriptionNumber, invoiceNumber: outcome.invoice.invoiceNumber });
-    else createdInvoices.push(outcome.invoice);
+    let processedPeriods = 0;
+    try {
+      while (processedPeriods < (forceAllActive ? 1 : MAX_CATCH_UP_PERIODS_PER_SUBSCRIPTION)) {
+        const outcome = await billOne(subscription._id, now, forceAllActive, useTransactions);
+        if (outcome.skipped) {
+          if (processedPeriods === 0) skippedSubscriptions.push({ subNumber: subscription.subscriptionNumber, reason: outcome.reason });
+          break;
+        }
+        processedPeriods += 1;
+        if (outcome.recovered) recoveredSubscriptions.push({ subNumber: subscription.subscriptionNumber, invoiceNumber: outcome.invoice.invoiceNumber });
+        else createdInvoices.push(outcome.invoice);
+        if (forceAllActive) break;
+        const current = await Subscription.findById(subscription._id).select('status nextBillingDate').lean();
+        if (!current || current.status !== 'Active' || !current.nextBillingDate || current.nextBillingDate > now) break;
+      }
+      if (!forceAllActive && processedPeriods === MAX_CATCH_UP_PERIODS_PER_SUBSCRIPTION) {
+        const current = await Subscription.findById(subscription._id).select('status nextBillingDate').lean();
+        if (current?.status === 'Active' && current.nextBillingDate && current.nextBillingDate <= now) {
+          catchUpPending.push({ subNumber: subscription.subscriptionNumber, nextBillingDate: current.nextBillingDate });
+        }
+      }
+    } catch (error) {
+      failedSubscriptions.push({ subNumber: subscription.subscriptionNumber, error: error.message });
+    }
   }
-  return { createdInvoices, skippedSubscriptions, recoveredSubscriptions };
+  return { createdInvoices, skippedSubscriptions, recoveredSubscriptions, failedSubscriptions, catchUpPending };
 };
 
 module.exports = { runRecurringBilling, advanceBillingDate, isTransactionUnsupported, applyDueScheduledPlanChange };

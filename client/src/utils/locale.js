@@ -38,3 +38,10 @@ export function toMinorUnits(amount) {
   if (!Number.isSafeInteger(result)) throw new TypeError('Amount exceeds supported precision.');
   return result;
 }
+
+export function invoiceOutstanding(invoice) {
+  if (!invoice || ['Draft', 'Cancelled'].includes(invoice.status)) return 0;
+  const total = invoice.grandTotalMinor ?? toMinorUnits(invoice.grandTotal || 0);
+  const paid = invoice.paidAmountMinor ?? toMinorUnits(invoice.paidAmount || 0);
+  return Math.max(0, total - paid) / 100;
+}
