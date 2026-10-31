@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brightloop - Subscription Management & Billing Prototype</title>
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f5f3ff',
+              100: '#ede9fe',
+              500: '#7c3aed',
+              600: '#6d28d9',
+              700: '#5b21b6',
+              900: '#2e1065',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
+
+  <!-- TOP APP BAR -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Logo & Platform Name -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+          <i class="fa-solid fa-arrows-spin text-xl"></i>
+        </div>
+        <div>
+          <span class="text-xl font-bold tracking-tight text-slate-900">Brightloop</span>
+          <span class="text-xs ml-1 px-2 py-0.5 rounded-full bg-brand-100 text-brand-700 font-medium">Subscriptions</span>
+        </div>
+      </div>
+
+      <!-- Quick Search Bar -->
+      <div class="hidden md:flex items-center flex-1 max-w-md mx-8">
+        <div class="relative w-full">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+          <input type="text" placeholder="Search subscriptions, customers, invoices..." class="w-full pl-9 pr-4 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition">
+        </div>
+      </div>
+
+      <!-- Role Switcher & User Profile -->
+      <div class="flex items-center space-x-4">
+        <!-- Live Role Simulator -->
+        <div class="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
+          <span class="text-slate-500 px-2 font-medium">Role:</span>
+          <select id="roleSelector" onchange="switchRole(this.value)" class="bg-white border border-slate-200 rounded px-2 py-1 font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer">
+            <option value="admin">Admin / Finance Lead</option>
+            <option value="staff">Internal Staff (Sales/Ops)</option>
+            <option value="customer">Customer Portal (Acme Corp)</option>
+          </select>
+        </div>
+
+        <!-- Notification & Avatar -->
+        <div class="relative">
+          <button class="w-9 h-9 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition">
+            <i class="fa-regular fa-bell text-sm"></i>
+          </button>
+          <span class="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500"></span>
+        </div>
+        <div class="flex items-center space-x-2 border-l border-slate-200 pl-4">
+          <div class="w-8 h-8 rounded-full bg-brand-600 text-white font-bold flex items-center justify-center text-xs" id="userAvatar">
+            AD
+          </div>
+          <div class="hidden lg:block text-left">
+            <p class="text-xs font-semibold leading-none text-slate-900" id="userName">Alex Morgan</p>
+            <p class="text-[10px] text-slate-500 leading-none mt-1" id="userRoleBadge">Finance Lead</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN NAVIGATION TABS -->
+    <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-8 text-sm font-medium border-t border-slate-100 overflow-x-auto" id="mainNav">
+      <button onclick="switchTab('dashboard')" id="nav-dashboard" class="tab-btn py-3 border-b-2 border-brand-600 text-brand-600 flex items-center space-x-2">
+        <i class="fa-solid fa-chart-pie"></i>
+        <span>Finance Dashboard</span>
+      </button>
+      <button onclick="switchTab('subscriptions')" id="nav-subscriptions" class="tab-btn py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2">
+        <i class="fa-solid fa-file-contract"></i>
+        <span>Subscriptions & Quotes</span>
+      </button>
+      <button onclick="switchTab('invoices')" id="nav-invoices" class="tab-btn py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2">
+        <i class="fa-solid fa-file-invoice-dollar"></i>
+        <span>Billing & Invoices</span>
+      </button>
+      <button onclick="switchTab('discounts')" id="nav-discounts" class="tab-btn py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2">
+        <i class="fa-solid fa-tags"></i>
+        <span>Discounts & Promos</span>
+      </button>
+      <button onclick="switchTab('portal')" id="nav-portal" class="tab-btn py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center space-x-2">
+        <i class="fa-solid fa-user-circle"></i>
+        <span>Customer Portal</span>
+      </button>
+    </nav>
+  </header>
+
+  <!-- MAIN BODY CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- ============================================================== -->
+    <!-- TAB 1: FINANCE LEAD DASHBOARD -->
+    <!-- ============================================================== -->
+    <div id="tab-dashboard" class="tab-content active space-y-6">
+      
+      <!-- Top Header & Action -->
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-slate-900">Subscription Financial Overview</h1>
+          <p class="text-sm text-slate-500">Live recurring revenue, retention metrics, and overdue accounts.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <button onclick="simulateBillingRun()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm flex items-center space-x-2 transition">
+            <i class="fa-solid fa-bolt"></i>
+            <span>Run Monthly Billing</span>
+          </button>
+          <button onclick="openNewSubModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-semibold shadow-sm flex items-center space-x-2 transition">
+            <i class="fa-solid fa-plus"></i>
+            <span>New Quotation</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- KPI Summary Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <!-- Metric 1: MRR -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 text-xs font-medium uppercase tracking-wider">
+            <span>Monthly Recurring Rev (MRR)</span>
+            <div class="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center">
+              <i class="fa-solid fa-dollar-sign text-sm"></i>
+            </div>
+          </div>
+          <div class="mt-3 flex items-baseline space-x-2">
+            <span class="text-2xl font-black text-slate-900">$128,450</span>
+            <span class="text-xs font-semibold text-emerald-600 flex items-center">
+              <i class="fa-solid fa-arrow-trend-up mr-0.5"></i> +14.2%
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">From 3,842 active contracts</p>
+        </div>
+
+        <!-- Metric 2: Active Subscriptions -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 text-xs font-medium uppercase tracking-wider">
+            <span>Active Subscriptions</span>
+            <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+              <i class="fa-solid fa-users text-sm"></i>
+            </div>
+          </div>
+          <div class="mt-3 flex items-baseline space-x-2">
+            <span class="text-2xl font-black text-slate-900">3,842</span>
+            <span class="text-xs font-semibold text-emerald-600 flex items-center">
+              <i class="fa-solid fa-arrow-trend-up mr-0.5"></i> +38 this mo
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">98.4% renewal rate</p>
+        </div>
+
+        <!-- Metric 3: Overdue Invoices -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 text-xs font-medium uppercase tracking-wider">
+            <span>Overdue Amount</span>
+            <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+              <i class="fa-solid fa-triangle-exclamation text-sm"></i>
+            </div>
+          </div>
+          <div class="mt-3 flex items-baseline space-x-2">
+            <span class="text-2xl font-black text-rose-600">$8,920</span>
+            <span class="text-xs font-semibold text-rose-600">14 invoices</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Needs follow-up</p>
+        </div>
+
+        <!-- Metric 4: Unpaid / Pending -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 text-xs font-medium uppercase tracking-wider">
+            <span>Pending Collections</span>
+            <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+              <i class="fa-solid fa-clock text-sm"></i>
+            </div>
+          </div>
+          <div class="mt-3 flex items-baseline space-x-2">
+            <span class="text-2xl font-black text-slate-900">$24,180</span>
+            <span class="text-xs font-semibold text-slate-500">Due within 15d</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">From current billing cycle</p>
+        </div>
+      </div>
+
+      <!-- Charts & Visual breakdown -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Lifecycle Distribution -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <h2 class="text-sm font-bold text-slate-900 mb-4">Subscription Status Pipeline</h2>
+          <div class="space-y-3">
+            <div>
+              <div class="flex justify-between text-xs font-medium text-slate-600 mb-1">
+                <span>Active Plans</span>
+                <span class="font-bold text-slate-900">3,842 (78%)</span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                <div class="bg-emerald-500 h-2.5 rounded-full" style="width: 78%"></div>
+              </div>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs font-medium text-slate-600 mb-1">
+                <span>Pending Quotations</span>
+                <span class="font-bold text-slate-900">420 (12%)</span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                <div class="bg-blue-500 h-2.5 rounded-full" style="width: 12%"></div>
+              </div>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs font-medium text-slate-600 mb-1">
+                <span>Drafts in Progress</span>
+                <span class="font-bold text-slate-900">180 (6%)</span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                <div class="bg-slate-400 h-2.5 rounded-full" style="width: 6%"></div>
+              </div>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs font-medium text-slate-600 mb-1">
+                <span>Overdue / Past Due</span>
+                <span class="font-bold text-rose-600">85 (4%)</span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                <div class="bg-rose-500 h-2.5 rounded-full" style="width: 4%"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Query response time:</span>
+            <span class="font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded font-bold">142ms (< 2s SLA)</span>
+          </div>
+        </div>
+
+        <!-- Overdue Action List -->
+        <div class="lg:col-span-2 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                Immediate Attention: Overdue Invoices
+              </h2>
+              <button onclick="switchTab('invoices')" class="text-xs font-semibold text-brand-600 hover:text-brand-700">View All Invoices &rarr;</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead>
+                  <tr class="border-b border-slate-200 text-slate-400 font-semibold uppercase tracking-wider">
+                    <th class="py-2">Invoice #</th>
+                    <th class="py-2">Customer</th>
+                    <th class="py-2">Due Date</th>
+                    <th class="py-2">Amount</th>
+                    <th class="py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 font-medium">
+                  <tr>
+                    <td class="py-3 font-mono font-bold text-slate-900">INV-2024-098</td>
+                    <td class="py-3">Eanon Germany Ltd</td>
+                    <td class="py-3 text-rose-600 font-semibold">12 days ago</td>
+                    <td class="py-3 font-bold">$2,450.00</td>
+                    <td class="py-3 text-right">
+                      <button onclick="openPaymentModal('INV-2024-098', 2450.00)" class="px-2.5 py-1 bg-brand-50 hover:bg-brand-100 text-brand-700 rounded font-semibold transition">Record Payment</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="py-3 font-mono font-bold text-slate-900">INV-2024-104</td>
+                    <td class="py-3">BlueWave Logistics</td>
+                    <td class="py-3 text-rose-600 font-semibold">7 days ago</td>
+                    <td class="py-3 font-bold">$1,850.00</td>
+                    <td class="py-3 text-right">
+                      <button onclick="openPaymentModal('INV-2024-104', 1850.00)" class="px-2.5 py-1 bg-brand-50 hover:bg-brand-100 text-brand-700 rounded font-semibold transition">Record Payment</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="py-3 font-mono font-bold text-slate-900">INV-2024-112</td>
+                    <td class="py-3">Nexus Retail India</td>
+                    <td class="py-3 text-rose-600 font-semibold">4 days ago</td>
+                    <td class="py-3 font-bold">$920.00</td>
+                    <td class="py-3 text-right">
+                      <button onclick="openPaymentModal('INV-2024-112', 920.00)" class="px-2.5 py-1 bg-brand-50 hover:bg-brand-100 text-brand-700 rounded font-semibold transition">Record Payment</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 text-xs flex items-center justify-between">
+            <span class="flex items-center gap-2">
+              <i class="fa-solid fa-bullhorn text-amber-600"></i>
+              Automated renewal reminders sent 3 days before expiry to reduce churn.
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- TAB 2: SUBSCRIPTIONS & QUOTES (LIFECYCLE MANAGEMENT) -->
+    <!-- ============================================================== -->
+    <div id="tab-subscriptions" class="tab-content space-y-6">
+      
+      <!-- Header -->
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-slate-900">Subscriptions & Quotations</h1>
+          <p class="text-sm text-slate-500">Manage lifecycle: Draft &rarr; Quotation &rarr; Confirmed &rarr; Active &rarr; Closed</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <!-- Filter by Status -->
+          <select id="statusFilter" onchange="filterSubscriptions()" class="bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="ALL">All Statuses</option>
+            <option value="Active">Active</option>
+            <option value="Quotation">Quotation</option>
+            <option value="Confirmed">Confirmed</option>
+            <option value="Draft">Draft</option>
+            <option value="Closed">Closed</option>
+          </select>
+          <button onclick="openNewSubModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-semibold shadow-sm flex items-center space-x-2 transition">
+            <i class="fa-solid fa-plus"></i>
+            <span>Create Subscription</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Interactive Subscription Detail Box (Scene 3 Feature Showcase) -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="bg-slate-50 px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+          <div class="flex items-center space-x-3">
+            <span class="text-lg font-bold font-mono text-slate-900">SUB-2024-0089</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800" id="currentSubBadge">ACTIVE</span>
+            <span class="text-xs text-slate-500">Customer: <strong class="text-slate-800">Apex Global Corp</strong></span>
+          </div>
+
+          <!-- Lifecycle Stepper / State Machine Bar -->
+          <div class="flex items-center space-x-1 sm:space-x-2 text-xs font-semibold">
+            <span class="px-2 py-1 rounded bg-slate-200 text-slate-600">Draft</span>
+            <span class="text-slate-400">&rarr;</span>
+            <span class="px-2 py-1 rounded bg-slate-200 text-slate-600">Quotation</span>
+            <span class="text-slate-400">&rarr;</span>
+            <span class="px-2 py-1 rounded bg-slate-200 text-slate-600">Confirmed</span>
+            <span class="text-slate-400">&rarr;</span>
+            <span class="px-2 py-1 rounded bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-400/30" id="stepActive">Active</span>
+            <span class="text-slate-400">&rarr;</span>
+            <span class="px-2 py-1 rounded bg-slate-100 text-slate-400">Closed</span>
+          </div>
+        </div>
+
+        <!-- Detail Form Body -->
+        <div class="p-6 space-y-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <div>
+              <label class="text-slate-400 font-medium block mb-1">Plan Template</label>
+              <div class="font-semibold text-slate-900 text-sm">Enterprise Cloud Suite</div>
+            </div>
+            <div>
+              <label class="text-slate-400 font-medium block mb-1">Billing Frequency</label>
+              <div class="font-semibold text-slate-900 text-sm">Monthly (Next: Nov 15, 2024)</div>
+            </div>
+            <div>
+              <label class="text-slate-400 font-medium block mb-1">Contract Validity</label>
+              <div class="font-semibold text-slate-900 text-sm">Jan 15, 2024 &rarr; Jan 14, 2025</div>
+            </div>
+            <div>
+              <label class="text-slate-400 font-medium block mb-1">Payment Terms</label>
+              <div class="font-semibold text-slate-900 text-sm">Net 30 Days</div>
+            </div>
+          </div>
+
+          <!-- Product Lines Table (with Variant & Discount) -->
+          <div>
+            <h3 class="text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Subscription Product Lines & Add-ons</h3>
+            <div class="border border-slate-200 rounded-lg overflow-hidden">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                  <tr>
+                    <th class="p-3">Product Name</th>
+                    <th class="p-3">Variant / Add-on</th>
+                    <th class="p-3 text-center">Qty</th>
+                    <th class="p-3 text-right">Unit Price</th>
+                    <th class="p-3 text-right">Taxes (10%)</th>
+                    <th class="p-3 text-right">Discount</th>
+                    <th class="p-3 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 font-medium">
+                  <tr>
+                    <td class="p-3 font-semibold text-slate-900">Brightloop Core ERP</td>
+                    <td class="p-3">
+                      <span class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-semibold border border-indigo-200">
+                        Odoo Brand (+ $60.00)
+                      </span>
+                    </td>
+                    <td class="p-3 text-center">1</td>
+                    <td class="p-3 text-right">$1,500.00</td>
+                    <td class="p-3 text-right">$150.00</td>
+                    <td class="p-3 text-right text-emerald-600 font-semibold">-$225.00 (15%)</td>
+                    <td class="p-3 text-right font-bold text-slate-900">$1,485.00</td>
+                  </tr>
+                  <tr>
+                    <td class="p-3 font-semibold text-slate-900">Additional User Seats</td>
+                    <td class="p-3 text-slate-500">Standard Tier</td>
+                    <td class="p-3 text-center">10</td>
+                    <td class="p-3 text-right">$25.00</td>
+                    <td class="p-3 text-right">$25.00</td>
+                    <td class="p-3 text-right text-slate-400">—</td>
+                    <td class="p-3 text-right font-bold text-slate-900">$275.00</td>
+                  </tr>
+                </tbody>
+                <tfoot class="bg-slate-50 border-t border-slate-200 font-bold text-slate-800 text-xs">
+                  <tr>
+                    <td colspan="6" class="p-3 text-right">Recurring Total / Month (incl. Taxes & Discounts):</td>
+                    <td class="p-3 text-right text-brand-700 font-extrabold text-sm">$1,760.00</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Action Bar for Subscription Transitions -->
+          <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+            <div class="text-xs text-slate-500 flex items-center gap-1.5">
+              <i class="fa-solid fa-circle-check text-emerald-500"></i>
+              Auto-renewal active. Next automated invoice scheduled for <strong>Nov 15, 2024</strong>.
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="pauseSubscription()" class="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-semibold border border-amber-200 transition">
+                <i class="fa-solid fa-pause mr-1"></i> Pause Plan
+              </button>
+              <button onclick="generateSingleInvoice('SUB-2024-0089', 1760.00)" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold shadow-sm transition">
+                <i class="fa-solid fa-receipt mr-1"></i> Invoice Now
+              </button>
+              <button onclick="closeSubscription()" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold border border-rose-200 transition">
+                <i class="fa-solid fa-ban mr-1"></i> Close Contract
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- All Subscriptions Data Table -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+          <h2 class="text-sm font-bold text-slate-900">All Subscriptions Directory</h2>
+          <span class="text-xs text-slate-400">Showing 4 of 3,842 contracts</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs" id="subsTable">
+            <thead class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider">
+              <tr>
+                <th class="p-3">Subscription #</th>
+                <th class="p-3">Customer</th>
+                <th class="p-3">Plan</th>
+                <th class="p-3">Billing Cadence</th>
+                <th class="p-3">Next Due</th>
+                <th class="p-3">Amount</th>
+                <th class="p-3">Status</th>
+                <th class="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 font-medium">
+              <tr class="hover:bg-slate-50 transition">
+                <td class="p-3 font-mono font-bold text-slate-900">SUB-2024-0089</td>
+                <td class="p-3 font-semibold text-slate-800">Apex Global Corp</td>
+                <td class="p-3">Enterprise Cloud</td>
+                <td class="p-3">Monthly</td>
+                <td class="p-3">Nov 15, 2024</td>
+                <td class="p-3 font-bold">$1,760.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">Active</span></td>
+                <td class="p-3 text-right space-x-1">
+                  <button class="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 font-semibold">View</button>
+                </td>
+              </tr>
+              <tr class="hover:bg-slate-50 transition">
+                <td class="p-3 font-mono font-bold text-slate-900">SUB-2024-0102</td>
+                <td class="p-3 font-semibold text-slate-800">Plait Company Inc</td>
+                <td class="p-3">Standard Business</td>
+                <td class="p-3">Yearly</td>
+                <td class="p-3">Dec 01, 2024</td>
+                <td class="p-3 font-bold">$5,400.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">Quotation</span></td>
+                <td class="p-3 text-right space-x-1">
+                  <button onclick="confirmQuote('SUB-2024-0102')" class="px-2 py-1 bg-brand-50 hover:bg-brand-100 text-brand-700 rounded font-semibold">Confirm Quote</button>
+                </td>
+              </tr>
+              <tr class="hover:bg-slate-50 transition">
+                <td class="p-3 font-mono font-bold text-slate-900">SUB-2024-0077</td>
+                <td class="p-3 font-semibold text-slate-800">Nexus Retail India</td>
+                <td class="p-3">Starter Cloud</td>
+                <td class="p-3">Monthly</td>
+                <td class="p-3 text-rose-600 font-bold">Past Due</td>
+                <td class="p-3 font-bold">$920.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">Overdue</span></td>
+                <td class="p-3 text-right space-x-1">
+                  <button class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded font-semibold">Chase</button>
+                </td>
+              </tr>
+              <tr class="hover:bg-slate-50 transition">
+                <td class="p-3 font-mono font-bold text-slate-900">SUB-2023-0941</td>
+                <td class="p-3 font-semibold text-slate-800">Old Town Bakery</td>
+                <td class="p-3">Basic POS</td>
+                <td class="p-3">Monthly</td>
+                <td class="p-3 text-slate-400">Ended</td>
+                <td class="p-3 font-bold text-slate-400">$89.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">Closed</span></td>
+                <td class="p-3 text-right space-x-1">
+                  <button class="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 font-semibold">Reopen</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- TAB 3: INVOICES & PAYMENT RECONCILIATION -->
+    <!-- ============================================================== -->
+    <div id="tab-invoices" class="tab-content space-y-6">
+      
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-slate-900">Invoices & Payment Reconciliation</h1>
+          <p class="text-sm text-slate-500">Lifecycle: Draft &rarr; Confirmed &rarr; Paid. Guaranteed no duplicate charges.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <button onclick="simulateBillingRun()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm flex items-center space-x-2 transition">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>Run Recurring Billing Batch</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Invoices Table -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs" id="invoicesTable">
+            <thead class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider">
+              <tr>
+                <th class="p-3">Invoice #</th>
+                <th class="p-3">Subscription Ref</th>
+                <th class="p-3">Customer</th>
+                <th class="p-3">Invoice Date</th>
+                <th class="p-3">Subtotal</th>
+                <th class="p-3">Taxes</th>
+                <th class="p-3">Total Amount</th>
+                <th class="p-3">Status</th>
+                <th class="p-3 text-right">Payment Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 font-medium" id="invoiceTableBody">
+              <tr>
+                <td class="p-3 font-mono font-bold text-slate-900">INV-2024-001</td>
+                <td class="p-3 font-mono text-slate-500">SUB-2024-0089</td>
+                <td class="p-3 font-semibold text-slate-800">Apex Global Corp</td>
+                <td class="p-3">Oct 15, 2024</td>
+                <td class="p-3">$1,600.00</td>
+                <td class="p-3">$160.00</td>
+                <td class="p-3 font-bold text-slate-900">$1,760.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">PAID</span></td>
+                <td class="p-3 text-right">
+                  <span class="text-xs text-slate-400 font-normal">Paid via Bank (Ref #9821)</span>
+                </td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono font-bold text-slate-900">INV-2024-098</td>
+                <td class="p-3 font-mono text-slate-500">SUB-2024-0044</td>
+                <td class="p-3 font-semibold text-slate-800">Eanon Germany Ltd</td>
+                <td class="p-3 text-rose-600 font-semibold">Oct 01, 2024</td>
+                <td class="p-3">$2,227.00</td>
+                <td class="p-3">$223.00</td>
+                <td class="p-3 font-bold text-rose-600">$2,450.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">OVERDUE</span></td>
+                <td class="p-3 text-right">
+                  <button onclick="openPaymentModal('INV-2024-098', 2450.00)" class="px-2.5 py-1 bg-brand-600 hover:bg-brand-700 text-white rounded font-semibold shadow-xs">Record Payment</button>
+                </td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono font-bold text-slate-900">INV-2024-115</td>
+                <td class="p-3 font-mono text-slate-500">SUB-2024-0105</td>
+                <td class="p-3 font-semibold text-slate-800">Horizon Tech Labs</td>
+                <td class="p-3">Oct 28, 2024</td>
+                <td class="p-3">$450.00</td>
+                <td class="p-3">$45.00</td>
+                <td class="p-3 font-bold text-slate-900">$495.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">CONFIRMED</span></td>
+                <td class="p-3 text-right">
+                  <button onclick="openPaymentModal('INV-2024-115', 495.00)" class="px-2.5 py-1 bg-brand-600 hover:bg-brand-700 text-white rounded font-semibold shadow-xs">Record Payment</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- TAB 4: DISCOUNTS & PROMOTIONS (ADMIN ONLY) -->
+    <!-- ============================================================== -->
+    <div id="tab-discounts" class="tab-content space-y-6">
+      
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-slate-900">Discounts & Promotion Rules</h1>
+          <p class="text-sm text-slate-500">Admin-only engine for percentage/fixed vouchers, minimum purchase thresholds, and usage caps.</p>
+        </div>
+        <button onclick="openNewDiscountModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-semibold shadow-sm flex items-center space-x-2 transition">
+          <i class="fa-solid fa-plus"></i>
+          <span>Create Discount Rule</span>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <!-- Rule 1 -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-16 h-16 bg-emerald-500/10 rounded-bl-full flex items-start justify-end p-2 text-emerald-600">
+            <i class="fa-solid fa-percent text-sm"></i>
+          </div>
+          <div class="text-xs font-mono font-bold text-brand-600 uppercase">ODOOPARTNER15</div>
+          <h3 class="text-base font-bold text-slate-900 mt-1">15% Off Odoo Brand Bundles</h3>
+          <p class="text-xs text-slate-500 mt-2">Applies automatically to subscriptions having the Odoo brand add-on with min purchase $1,000.</p>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs space-y-1.5 text-slate-600">
+            <div class="flex justify-between">
+              <span>Usage:</span>
+              <strong class="text-slate-900">42 / 100 redeemed</strong>
+            </div>
+            <div class="flex justify-between">
+              <span>Expiry:</span>
+              <strong class="text-slate-900">Dec 31, 2024</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rule 2 -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-16 h-16 bg-blue-500/10 rounded-bl-full flex items-start justify-end p-2 text-blue-600">
+            <i class="fa-solid fa-dollar-sign text-sm"></i>
+          </div>
+          <div class="text-xs font-mono font-bold text-brand-600 uppercase">SCALEUP500</div>
+          <h3 class="text-base font-bold text-slate-900 mt-1">$500 Fixed Annual Rebate</h3>
+          <p class="text-xs text-slate-500 mt-2">Fixed discount for customers choosing yearly billing contracts with min 10 user seats.</p>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs space-y-1.5 text-slate-600">
+            <div class="flex justify-between">
+              <span>Usage:</span>
+              <strong class="text-slate-900">18 / 50 redeemed</strong>
+            </div>
+            <div class="flex justify-between">
+              <span>Expiry:</span>
+              <strong class="text-slate-900">Nov 30, 2024</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rule 3 -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden opacity-60">
+          <div class="absolute top-0 right-0 w-16 h-16 bg-slate-500/10 rounded-bl-full flex items-start justify-end p-2 text-slate-500">
+            <i class="fa-solid fa-lock text-sm"></i>
+          </div>
+          <div class="text-xs font-mono font-bold text-slate-500 uppercase">SUMMER2024</div>
+          <h3 class="text-base font-bold text-slate-900 mt-1">10% Early Bird Off</h3>
+          <p class="text-xs text-slate-500 mt-2">Expired campaign. Automatic cessation prevents billing from applying old discounts.</p>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs space-y-1.5 text-slate-600">
+            <div class="flex justify-between">
+              <span>Status:</span>
+              <span class="font-bold text-rose-600">Expired</span>
+            </div>
+            <div class="flex justify-between">
+              <span>Redeemed:</span>
+              <strong class="text-slate-900">100 / 100 max</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- TAB 5: CUSTOMER SELF-SERVICE PORTAL -->
+    <!-- ============================================================== -->
+    <div id="tab-portal" class="tab-content space-y-6">
+      
+      <!-- Welcome Client Header -->
+      <div class="bg-gradient-to-r from-brand-900 to-indigo-900 text-white rounded-2xl p-6 sm:p-8 shadow-md">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <span class="text-xs uppercase tracking-wider font-semibold text-brand-200 bg-white/10 px-3 py-1 rounded-full">Customer Portal</span>
+            <h1 class="text-2xl sm:text-3xl font-extrabold mt-2">Welcome back, Acme Retail Corp</h1>
+            <p class="text-sm text-brand-100 mt-1">Manage your active plans, switch add-ons, and download receipts without needing support.</p>
+          </div>
+          <div class="text-right">
+            <p class="text-xs text-brand-200">Account ID: <span class="font-mono font-bold text-white">CUST-8831</span></p>
+            <p class="text-xs text-brand-200 mt-0.5">Primary Email: <span class="text-white">finance@acmeretail.com</span></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Plan Card -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div class="flex flex-col md:flex-row md:items-center justify-between pb-6 border-b border-slate-100 gap-4">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">ACTIVE PLAN</span>
+              <span class="text-xs text-slate-400">Renews automatically</span>
+            </div>
+            <h2 class="text-xl font-bold text-slate-900 mt-1">Business Suite Professional</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Billed monthly &bull; Next billing date: <strong>Nov 15, 2024</strong></p>
+          </div>
+          <div class="text-right">
+            <div class="text-3xl font-black text-brand-700">$89<span class="text-sm font-normal text-slate-500">/mo</span></div>
+            <p class="text-xs text-slate-400">Card ending in &bull;&bull;&bull;&bull; 4242</p>
+          </div>
+        </div>
+
+        <!-- Add-on Toggles (Page 1: "add-ons customers switch on and off") -->
+        <div class="mt-6">
+          <h3 class="text-xs font-bold uppercase text-slate-500 tracking-wider mb-4">Optional Add-ons (Switch anytime)</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            <div class="flex items-center justify-between p-4 rounded-xl border border-slate-200 hover:border-brand-300 transition">
+              <div>
+                <div class="font-semibold text-slate-900 text-sm">Advanced Financial Analytics</div>
+                <div class="text-xs text-slate-500">Real-time forecasts and P&L drilldowns</div>
+                <div class="text-xs font-bold text-brand-600 mt-1">+$15.00 / month</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" checked onchange="toggleAddon('Analytics', this.checked, 15)" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between p-4 rounded-xl border border-slate-200 hover:border-brand-300 transition">
+              <div>
+                <div class="font-semibold text-slate-900 text-sm">24/7 Priority Support SLA</div>
+                <div class="text-xs text-slate-500">Dedicated representative & 1-hour response</div>
+                <div class="text-xs font-bold text-brand-600 mt-1">+$25.00 / month</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" onchange="toggleAddon('Priority Support', this.checked, 25)" class="sr-only peer">
+                <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+              </label>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Customer Invoices History -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+          <h3 class="text-sm font-bold text-slate-900">Your Invoices & Receipts</h3>
+          <span class="text-xs text-slate-400">PDF downloads available immediately</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider">
+              <tr>
+                <th class="p-3">Invoice #</th>
+                <th class="p-3">Date</th>
+                <th class="p-3">Plan / Description</th>
+                <th class="p-3">Total Paid</th>
+                <th class="p-3">Status</th>
+                <th class="p-3 text-right">Receipt</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 font-medium">
+              <tr>
+                <td class="p-3 font-mono font-bold text-slate-900">BL-8120</td>
+                <td class="p-3">Oct 15, 2024</td>
+                <td class="p-3">Business Suite Pro + Analytics</td>
+                <td class="p-3 font-bold text-slate-900">$104.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">Paid</span></td>
+                <td class="p-3 text-right">
+                  <button onclick="downloadMockPDF('BL-8120')" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-semibold transition">
+                    <i class="fa-solid fa-file-pdf mr-1 text-rose-500"></i> Download PDF
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono font-bold text-slate-900">BL-7945</td>
+                <td class="p-3">Sep 15, 2024</td>
+                <td class="p-3">Business Suite Pro + Analytics</td>
+                <td class="p-3 font-bold text-slate-900">$104.00</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">Paid</span></td>
+                <td class="p-3 text-right">
+                  <button onclick="downloadMockPDF('BL-7945')" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-semibold transition">
+                    <i class="fa-solid fa-file-pdf mr-1 text-rose-500"></i> Download PDF
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ============================================================== -->
+  <!-- MODAL: RECORD PAYMENT (SCENE 6) -->
+  <!-- ============================================================== -->
+  <div id="paymentModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-base font-bold text-slate-900">Record Invoice Payment</h3>
+        <button onclick="closePaymentModal()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleRecordPayment(event)" class="mt-4 space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Invoice Reference</label>
+          <input type="text" id="modalInvId" readonly class="w-full bg-slate-100 border border-slate-200 rounded-lg p-2 font-mono font-bold text-slate-900">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Amount to Pay ($)</label>
+          <input type="number" id="modalInvAmount" step="0.01" required class="w-full border border-slate-300 rounded-lg p-2 font-bold text-slate-900 focus:ring-2 focus:ring-brand-500">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Payment Method</label>
+          <select id="modalPaymentMethod" class="w-full border border-slate-300 rounded-lg p-2 font-medium text-slate-800">
+            <option value="Bank Transfer">Direct Bank Wire / NEFT</option>
+            <option value="Credit Card">Credit / Debit Card</option>
+            <option value="UPI / Online">UPI / Instant Gateway</option>
+            <option value="Check">Company Check</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Payment Date</label>
+          <input type="date" id="modalPaymentDate" value="2024-10-31" class="w-full border border-slate-300 rounded-lg p-2 font-medium text-slate-800">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Internal Reference / Note</label>
+          <input type="text" id="modalPaymentNote" placeholder="e.g. Bank statement txn ref #9829" class="w-full border border-slate-300 rounded-lg p-2 text-slate-800">
+        </div>
+        <div class="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+          <button type="button" onclick="closePaymentModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold">Cancel</button>
+          <button type="submit" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold shadow-sm">Confirm & Reconcile</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- NOTIFICATION TOAST -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl flex items-center space-x-3 text-xs z-50 transform translate-y-24 opacity-0 transition-all duration-300">
+    <i class="fa-solid fa-circle-check text-emerald-400 text-sm" id="toastIcon"></i>
+    <span id="toastMsg">Action completed successfully</span>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('border-brand-600', 'text-brand-600');
+        btn.classList.add('border-transparent', 'text-slate-500');
+      });
+
+      const targetTab = document.getElementById('tab-' + tabName);
+      const targetNav = document.getElementById('nav-' + tabName);
+      if (targetTab) targetTab.classList.add('active');
+      if (targetNav) {
+        targetNav.classList.remove('border-transparent', 'text-slate-500');
+        targetNav.classList.add('border-brand-600', 'text-brand-600');
+      }
+    }
+
+    function switchRole(role) {
+      const userAvatar = document.getElementById('userAvatar');
+      const userName = document.getElementById('userName');
+      const userRoleBadge = document.getElementById('userRoleBadge');
+      const navDiscounts = document.getElementById('nav-discounts');
+
+      if (role === 'admin') {
+        userAvatar.innerText = 'AD';
+        userName.innerText = 'Alex Morgan';
+        userRoleBadge.innerText = 'Admin / Finance';
+        navDiscounts.style.display = 'flex';
+        switchTab('dashboard');
+        showToast('Switched to Admin: Full access enabled');
+      } else if (role === 'staff') {
+        userAvatar.innerText = 'ST';
+        userName.innerText = 'Jordan Lee';
+        userRoleBadge.innerText = 'Sales & Operations';
+        navDiscounts.style.display = 'none'; // Only Admin creates discounts per Page 4
+        switchTab('subscriptions');
+        showToast('Switched to Staff: Discount rules hidden');
+      } else if (role === 'customer') {
+        userAvatar.innerText = 'AR';
+        userName.innerText = 'Sarah Jenkins';
+        userRoleBadge.innerText = 'Acme Retail Corp';
+        switchTab('portal');
+        showToast('Switched to Customer Self-Service Portal');
+      }
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMsg');
+      toastMsg.innerText = msg;
+      toast.classList.remove('translate-y-24', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-24', 'opacity-0');
+      }, 3000);
+    }
+
+    function simulateBillingRun() {
+      showToast('Billing Engine: Invoices generated for due subscriptions. Taxes & discounts auto-calculated.');
+    }
+
+    function confirmQuote(subId) {
+      showToast('Quotation ' + subId + ' converted to Confirmed Active Subscription!');
+    }
+
+    function pauseSubscription() {
+      const badge = document.getElementById('currentSubBadge');
+      badge.innerText = 'PAUSED';
+      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800';
+      showToast('Subscription SUB-2024-0089 paused.');
+    }
+
+    function closeSubscription() {
+      const badge = document.getElementById('currentSubBadge');
+      badge.innerText = 'CLOSED';
+      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-800';
+      showToast('Subscription closed early.');
+    }
+
+    function generateSingleInvoice(subId, amount) {
+      showToast('Generated invoice for ' + subId + ' ($' + amount + '). Sent to customer portal.');
+    }
+
+    function openPaymentModal(invId, amount) {
+      document.getElementById('modalInvId').value = invId;
+      document.getElementById('modalInvAmount').value = amount;
+      document.getElementById('paymentModal').classList.remove('hidden');
+      document.getElementById('paymentModal').classList.add('flex');
+    }
+
+    function closePaymentModal() {
+      document.getElementById('paymentModal').classList.add('hidden');
+      document.getElementById('paymentModal').classList.remove('flex');
+    }
+
+    function handleRecordPayment(e) {
+      e.preventDefault();
+      const invId = document.getElementById('modalInvId').value;
+      const amt = document.getElementById('modalInvAmount').value;
+      const method = document.getElementById('modalPaymentMethod').value;
+      closePaymentModal();
+      showToast('Recorded payment of $' + amt + ' via ' + method + ' for ' + invId + '. Status: PAID.');
+    }
+
+    function toggleAddon(name, active, price) {
+      if (active) {
+        showToast('Added ' + name + ' (+$' + price + '/mo). Next invoice will reflect change.');
+      } else {
+        showToast('Removed ' + name + '. Will cease next billing period.');
+      }
+    }
+
+    function downloadMockPDF(invId) {
+      showToast('Downloaded official invoice PDF: ' + invId + '.pdf');
+    }
+
+    function openNewSubModal() {
+      showToast('Opening Quotation Template Builder...');
+    }
+
+    function openNewDiscountModal() {
+      showToast('Opening Admin Discount Rule Creator...');
+    }
+  </script>
+</body>
+</html>

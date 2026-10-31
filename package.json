@@ -1,0 +1,10 @@
+{
+  "name": "brightloop-subscription-system",
+  "version": "1.0.0",
+  "description": "Brightloop Subscription Management & Recurring Billing Platform",
+  "scripts": {
+    "server": "npm --prefix server run start",
+    "client": "npm --prefix client run dev",
+    "seed": "node server/controllers/seedController.js"
+  }
+}

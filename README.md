@@ -1,1 +1,0 @@
-# odoo_Hackethone_Subcription_man_sys
