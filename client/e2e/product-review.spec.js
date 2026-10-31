@@ -159,7 +159,7 @@ test('switching accounts clears cached business queries', async ({ context, page
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('h1')).toContainText('Review customer');
   const response = page.waitForResponse((result) => result.url().startsWith(`${api}/invoices?`) && result.status() === 200);
-  await page.getByRole('link', { name: 'Invoices', exact: true }).click();
+  await page.getByRole('link', { name: 'My invoices', exact: true }).click();
   const data = await (await response).json();
   expect(data.data.every((invoice) => invoice.customer === records.customer)).toBeTruthy();
 });

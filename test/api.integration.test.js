@@ -423,6 +423,16 @@ test('Phase 1 backend workflows enforce roles, discounts, ownership, billing rec
   const resumed = await Subscription.findById(subscription._id);
   assert.ok(resumed.nextBillingDate > beforeResume.nextBillingDate);
   assert.ok(resumed.lastInvoicedDate > beforeResume.lastInvoicedDate);
+  const nonDebts = await Invoice.insertMany([
+    { invoiceNumber: 'INT-ZERO-DUE', grandTotal: 0, grandTotalMinor: 0, paidAmountMinor: 0, status: 'Confirmed', dueDate: new Date('2020-01-01') },
+    { invoiceNumber: 'INT-SETTLED-LABEL', grandTotal: 10, grandTotalMinor: 1000, paidAmount: 10, paidAmountMinor: 1000, status: 'Overdue', dueDate: new Date('2020-01-01') },
+    { invoiceNumber: 'INT-FUTURE-LABEL', grandTotal: 10, grandTotalMinor: 1000, status: 'Overdue', dueDate: new Date('2099-01-01') }
+  ].map((row) => ({ subscription: subscription._id, subscriptionNumber: subscription.subscriptionNumber, customer: registeredUser._id, customerName: 'Review', customerEmail: registeredUser.email, subtotal: row.grandTotal, ...row })));
+  const overview = await request('/dashboard/metrics', { cookie: staffCookie });
+  const overdueRows = (await Invoice.find({ status: { $in: ['Confirmed', 'Overdue'] }, dueDate: { $lt: new Date() } }).lean()).filter((row) => (row.grandTotalMinor ?? Math.round(row.grandTotal * 100)) > (row.paidAmountMinor ?? Math.round((row.paidAmount || 0) * 100)));
+  assert.equal(overview.data.metrics.overdueCount, overdueRows.length);
+  const notices = await request('/notifications', { cookie: customerCookie });
+  assert.equal(notices.data.data.some((notice) => nonDebts.some((row) => String(row._id) === notice.id)), false);
 
   const forgottenExisting = await request('/auth/forgot-password', { method: 'POST', body: { email: 'customer@test.invalid' } });
   const forgottenUnknown = await request('/auth/forgot-password', { method: 'POST', body: { email: 'missing@test.invalid' } });

@@ -1,5 +1,6 @@
 const Invoice = require('../models/Invoice');
 const Subscription = require('../models/Subscription');
+const { overdueFilter } = require('../utils/invoiceQuery');
 
 exports.listNotifications = async (req, res) => {
   try {
@@ -8,16 +9,13 @@ exports.listNotifications = async (req, res) => {
     horizon.setDate(horizon.getDate() + 7);
     const ownerFilter = req.user.role === 'customer' ? { customer: req.user._id } : {};
     const [overdueInvoices, upcomingSubscriptions] = await Promise.all([
-      Invoice.find({ ...ownerFilter, $or: [
-        { status: 'Overdue' },
-        { status: 'Confirmed', dueDate: { $lt: today } }
-      ] }).select('invoiceNumber customerName grandTotal paidAmount dueDate status').sort({ dueDate: 1 }).limit(8),
+      Invoice.find({ ...ownerFilter, ...overdueFilter(today) }).select('invoiceNumber customerName grandTotal paidAmount dueDate status').sort({ dueDate: 1 }).limit(8),
       Subscription.find({ ...ownerFilter, status: 'Active', nextBillingDate: { $gte: today, $lte: horizon } }).select('subscriptionNumber customerName planName nextBillingDate recurringTotal').sort({ nextBillingDate: 1 }).limit(8)
     ]);
     const items = [
       ...overdueInvoices.map((invoice) => ({
         id: String(invoice._id), type: 'overdue', title: `${invoice.invoiceNumber} is overdue`,
-        detail: `${invoice.customerName} · due ${new Date(invoice.dueDate).toLocaleDateString()}`,
+        detail: `${invoice.customerName} · due ${new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(invoice.dueDate))}`,
         date: invoice.dueDate, href: `/app/invoices/${invoice._id}`
       })),
       ...upcomingSubscriptions.map((subscription) => ({

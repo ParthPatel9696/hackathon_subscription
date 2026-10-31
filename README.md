@@ -101,14 +101,14 @@ Historical invoices store their own line and customer details. Product or plan e
 - Password reset and invoice email delivery are optional and use Nodemailer when SMTP is configured (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`). Without SMTP, non-production mode returns a simulated reset URL; production responses do not include a link.
 - The public contact page explains that support contact details are not configured; it does not submit a contact form.
 - Customer email and password changes require separate verification/recovery workflows. Staff can view customer records, while customer create/edit/archive is admin-only. Archiving is blocked while active subscriptions or unpaid invoices remain; account records are archived instead of hard-deleted so their financial history stays linked.
-- Quotations support reusable templates, validity dates, server-generated PDFs, SMTP email, customer acceptance/decline, and automatic expiry. A full line editor and revision/duplicate workflow remain incomplete.
-- Product and plan management supports create/edit, not variants through a dedicated editor, deletion, or full detail routes. Product variants can be edited as JSON.
+- Quotations support reusable templates, validity dates, server-generated PDFs, SMTP email, customer acceptance/decline, and automatic expiry. Creation supports editable multi-line templates. Editing issued quotations and the revision/duplicate workflow remain incomplete.
+- Product and plan management includes create/edit, detail routes, archival, and a dedicated variant editor. Price revision history and image uploads remain incomplete.
 - Subscription detail and plan-change history, customer activity, subscription health, billing calendar, revenue intelligence, command search, and table visibility/order/density/saved-view controls are available. Saved table preferences are per user in local browser storage and do not synchronize across devices.
 - Payment allocation detail and dashboard widget preferences are not implemented.
 - Revenue Intelligence reports observed subscription events and dated collections; historical MRR/retention are unavailable when older subscription snapshots are missing.
 - The notification center reports actual overdue invoices and upcoming renewals; failed billing attempts are not represented in the current data model.
 - Authentication endpoints have per-IP in-memory rate limits. Multi-instance deployments need a shared rate-limit store. MongoDB transaction paths require a replica set or mongos; the integration run against standalone MongoDB covers the recoverable fallback path.
-- Browser end-to-end tests are not present.
+- Browser coverage now includes public and role-based route checks at desktop/mobile widths, registration, editable template quotations, payment settlement, CSV downloads, dialog focus, and account switching. See `client/e2e/product-review.spec.js`.
 
 ## Checks
 

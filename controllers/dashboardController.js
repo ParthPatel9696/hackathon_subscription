@@ -2,6 +2,7 @@ const Subscription = require('../models/Subscription');
 const Invoice = require('../models/Invoice');
 const User = require('../models/User');
 const Payment = require('../models/Payment');
+const { overdueFilter } = require('../utils/invoiceQuery');
 const { toMinor, fromMinor, normalizeMonthlyMinor } = require('../utils/money');
 
 // GET /api/dashboard/metrics
@@ -44,10 +45,7 @@ exports.getFinanceMetrics = async (req, res) => {
     const [totalInvoices, totalCustomers, overdueCount, collectionAggregate] = await Promise.all([
       Invoice.countDocuments(),
       User.countDocuments({ role: 'customer' }),
-      Invoice.countDocuments({ $or: [
-        { status: 'Overdue' },
-        { status: 'Confirmed', dueDate: { $lt: today } }
-      ] }),
+      Invoice.countDocuments(overdueFilter(today)),
       Payment.aggregate([
         { $match: { $or: [{ status: 'posted' }, { status: { $exists: false } }] } },
         { $project: {
@@ -59,18 +57,10 @@ exports.getFinanceMetrics = async (req, res) => {
     const totalCollectedMinor = collectionAggregate[0]?.total || 0;
 
     // Overdue Invoices
-    const overdueInvoices = await Invoice.find({
-      $or: [
-        { status: 'Overdue' },
-        { status: 'Confirmed', dueDate: { $lt: today } }
-      ]
-    }).sort({ dueDate: 1 }).limit(10);
+    const overdueInvoices = await Invoice.find(overdueFilter(today)).sort({ dueDate: 1 }).limit(10);
 
     const overdueBalances = await Invoice.aggregate([
-      { $match: { $or: [
-        { status: 'Overdue' },
-        { status: 'Confirmed', dueDate: { $lt: today } }
-      ] } },
+      { $match: overdueFilter(today) },
       { $project: {
         outstanding: { $max: [0, { $subtract: [
           { $ifNull: ['$grandTotalMinor', { $multiply: ['$grandTotal', 100] }] },
