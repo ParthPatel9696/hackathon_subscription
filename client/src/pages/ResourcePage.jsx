@@ -12,6 +12,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
   const currentUser = useAuthStore((state) => state.user);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
+  const [customerStatus, setCustomerStatus] = useState('ALL');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [modal, setModal] = useState(null);
 
@@ -22,7 +23,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
   }, [customerSearch, resource]);
 
   const requestUrl = resource === 'customers'
-    ? `/customers?search=${encodeURIComponent(debouncedSearch)}&page=${customerPage}&limit=50&status=${status}`
+    ? `/customers?search=${encodeURIComponent(debouncedSearch)}&page=${customerPage}&limit=50&status=${customerStatus}`
     : endpoint;
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: [resource === 'customers' ? 'customers' : requestUrl, requestUrl],
@@ -30,7 +31,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
   });
   const rows = Array.isArray(data?.data) ? data.data : [];
   const { search, setSearch, status, setStatus, filtered } = useTableFilters(rows);
-  const statuses = [...new Set(rows.map((row) => row.status || row.accountStatus).filter(Boolean))];
+  const statuses = resource === 'customers' ? ['Active', 'Archived'] : [...new Set(rows.map((row) => row.status || row.accountStatus).filter(Boolean))];
 
   const onSearch = (value) => {
     setSearch(value);
@@ -56,7 +57,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
     <div className="resource-toolbar">
       <label className="sr-only" htmlFor="record-search">Search records</label>
       <input id="record-search" className="field resource-search" placeholder={resource === 'customers' ? 'Search name, company, or email…' : 'Search records…'} value={search} onChange={(event) => onSearch(event.target.value)} />
-      {statuses.length > 0 && <><label className="sr-only" htmlFor="status-filter">Filter by status</label><select id="status-filter" className="field resource-status-filter" value={status} onChange={(event) => setStatus(event.target.value)}><option value="ALL">All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></>}
+      {statuses.length > 0 && <><label className="sr-only" htmlFor="status-filter">Filter by status</label><select id="status-filter" className="field resource-status-filter" value={resource === 'customers' ? customerStatus : status} onChange={(event) => { setStatus(event.target.value); if (resource === 'customers') setCustomerStatus(event.target.value); }}><option value="ALL">All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></>}
       <button type="button" className="button secondary-button" onClick={() => refetch()}><RefreshCw size={15}/> Refresh</button>
       <button type="button" className="button secondary-button" onClick={exportCsv}><Download size={15}/> Export CSV</button>
       {resource === 'subscriptions' && <button type="button" className="button" onClick={() => setModal('subscription')}><Plus size={15}/> New quotation</button>}
