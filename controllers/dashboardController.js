@@ -1,6 +1,6 @@
 const Subscription = require('../models/Subscription');
 const Invoice = require('../models/Invoice');
-const Payment = require('../models/Payment');
+const { toMinor, fromMinor } = require('../utils/money');
 
 // GET /api/dashboard/metrics
 exports.getFinanceMetrics = async (req, res) => {
@@ -10,7 +10,7 @@ exports.getFinanceMetrics = async (req, res) => {
 
     // 1. Subscription counts by status
     const subsPipeline = await Subscription.aggregate([
-      { $group: { _id: '$status', count: { $sum: 1 }, totalMRR: { $sum: '$recurringTotal' } } }
+      { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
     const statusCounts = {
@@ -21,15 +21,21 @@ exports.getFinanceMetrics = async (req, res) => {
       Paused: 0,
       Closed: 0
     };
-    let mrr = 0;
+    let mrrMinor = 0;
 
     subsPipeline.forEach(item => {
       if (statusCounts[item._id] !== undefined) {
         statusCounts[item._id] = item.count;
       }
-      if (item._id === 'Active') {
-        mrr = item.totalMRR;
-      }
+    });
+
+    const activeSubscriptions = await Subscription.find({ status: 'Active' }).select('recurringTotal recurringTotalMinor billingFrequency');
+    activeSubscriptions.forEach(subscription => {
+      const recurringMinor = subscription.recurringTotalMinor ?? toMinor(subscription.recurringTotal);
+      if (subscription.billingFrequency === 'yearly') mrrMinor += Math.round(recurringMinor / 12);
+      else if (subscription.billingFrequency === 'weekly') mrrMinor += Math.round(recurringMinor * 52 / 12);
+      else if (subscription.billingFrequency === 'daily') mrrMinor += Math.round(recurringMinor * 365 / 12);
+      else mrrMinor += recurringMinor;
     });
 
     // 2. Invoices summary
@@ -38,9 +44,12 @@ exports.getFinanceMetrics = async (req, res) => {
     // Total Revenue collected (Paid invoices)
     const paidInvoices = await Invoice.aggregate([
       { $match: { status: 'Paid' } },
-      { $group: { _id: null, total: { $sum: '$paidAmount' } } }
+      { $project: {
+        paidMinor: { $ifNull: ['$paidAmountMinor', { $multiply: ['$paidAmount', 100] }] }
+      } },
+      { $group: { _id: null, total: { $sum: '$paidMinor' } } }
     ]);
-    const totalCollected = paidInvoices[0]?.total || 0;
+    const totalCollectedMinor = paidInvoices[0]?.total || 0;
 
     // Overdue Invoices
     const overdueInvoices = await Invoice.find({
@@ -50,14 +59,29 @@ exports.getFinanceMetrics = async (req, res) => {
       ]
     }).sort({ dueDate: 1 }).limit(10);
 
-    const overdueSum = overdueInvoices.reduce((acc, inv) => acc + (inv.grandTotal - (inv.paidAmount || 0)), 0);
+    const overdueSumMinor = overdueInvoices.reduce((acc, inv) => {
+      const grandTotalMinor = inv.grandTotalMinor ?? toMinor(inv.grandTotal);
+      const paidAmountMinor = inv.paidAmountMinor ?? toMinor(inv.paidAmount || 0);
+      return acc + Math.max(0, grandTotalMinor - paidAmountMinor);
+    }, 0);
 
     // Pending / Outstanding
     const pendingInvoices = await Invoice.aggregate([
-      { $match: { status: { $in: ['Confirmed', 'Draft'] } } },
-      { $group: { _id: null, total: { $sum: '$grandTotal' } } }
+      { $match: { status: { $in: ['Confirmed', 'Draft', 'Overdue'] } } },
+      { $project: {
+        outstanding: {
+          $max: [
+            0,
+            { $subtract: [
+              { $ifNull: ['$grandTotalMinor', { $multiply: ['$grandTotal', 100] }] },
+              { $ifNull: ['$paidAmountMinor', { $multiply: ['$paidAmount', 100] }] }
+            ] }
+          ]
+        }
+      } },
+      { $group: { _id: null, total: { $sum: '$outstanding' } } }
     ]);
-    const pendingAmount = pendingInvoices[0]?.total || 0;
+    const pendingAmountMinor = pendingInvoices[0]?.total || 0;
 
     const responseTimeMs = Date.now() - startTime;
 
@@ -68,12 +92,12 @@ exports.getFinanceMetrics = async (req, res) => {
         slaMet: responseTimeMs < 2000
       },
       metrics: {
-        mrr,
+        mrr: fromMinor(mrrMinor),
         activeSubscriptionsCount: statusCounts.Active,
         overdueCount: overdueInvoices.length,
-        overdueAmount: overdueSum,
-        totalCollected,
-        pendingAmount,
+        overdueAmount: fromMinor(overdueSumMinor),
+        totalCollected: fromMinor(Math.round(totalCollectedMinor)),
+        pendingAmount: fromMinor(Math.round(pendingAmountMinor)),
         totalInvoices,
         statusPipeline: statusCounts
       },

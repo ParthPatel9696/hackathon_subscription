@@ -7,6 +7,7 @@ const paymentSchema = new mongoose.Schema({
     required: true
   },
   invoiceNumber: { type: String, required: true },
+  amountMinor: { type: Number, min: 1 },
   amount: { type: Number, required: true, min: 0.01 },
   method: {
     type: String,

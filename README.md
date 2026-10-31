@@ -1,4 +1,4 @@
-# 🚀 Brightloop - Subscription Management & Recurring Billing API
+# 🚀 Brightloop - Subscription Management & Recurring Billing System
 
 A complete, production-ready backend API built with **Node.js**, **Express**, and **MongoDB (Mongoose)** for managing software subscriptions, multi-variant products, automated recurring billing cycles, and payment reconciliation.
 
@@ -26,6 +26,7 @@ This backend serves as the **digital backbone** for a subscription business:
 * **Database:** MongoDB with Mongoose ODM
 * **Security & Auth:** JSON Web Tokens (JWT) & bcrypt password hashing
 * **Architecture:** Modular MVC (Models, Controllers, Routes, Middleware)
+* **Frontend:** React, Vite, Tailwind CSS, React Router, Zustand, Axios, TanStack Query, Lucide React, Recharts
 
 ---
 
@@ -262,7 +263,8 @@ Create a `.env` file in the `server` directory:
 ```env
 PORT=5000
 MONGODB_URI=mongodb://127.0.0.1:27017/brightloop_subscriptions
-JWT_SECRET=brightloop_super_secret_hackathon_key_2024
+JWT_SECRET=replace-with-a-long-random-secret
+CLIENT_ORIGIN=http://localhost:5173
 ```
 
 ### 4. Seed Initial Hackathon Data
@@ -284,6 +286,72 @@ npm run dev
 
 Server runs on: **`http://localhost:5000`**  
 API Base: **`http://localhost:5000/api`**
+
+### 6. Start the React client
+
+```bash
+cd client
+npm install
+npm run dev
+```
+
+The client runs on **`http://localhost:5173`** and uses `VITE_API_URL` when provided;
+otherwise it connects to `http://localhost:5000/api`.
+
+## 🧭 Current architecture and security boundaries
+
+The backend preserves the original endpoint paths while using the following flow:
+
+```
+Routes → Middleware → Controllers → Services → Models → MongoDB
+```
+
+Financial endpoints require authentication. Admins manage staff, discounts, and forced
+billing; staff manage operational billing; customers are restricted to their own
+subscriptions, invoices, and payment history. The seed endpoint is admin-only because
+it deletes and recreates all application data.
+
+The client provides role-aware layouts for administrator, staff, and customer portals.
+The browser uses an HTTP-only, SameSite session cookie for API authentication; Bearer
+tokens remain accepted for existing API clients. JWT logout clears the cookie. A token
+blacklist/session store can be added if immediate server-side revocation across already
+issued tokens is required.
+
+## 💰 Financial calculation methodology
+
+All new calculations use integer minor currency units (cents) internally:
+
+* **Line subtotal:** `(unit price + variant adjustment) × quantity`
+* **Tax:** `line subtotal × tax rate`, rounded to the nearest minor unit
+* **Line total:** `subtotal + tax - discount`
+* **Outstanding balance:** `max(0, invoice total - paid amount)`
+* **Collected revenue:** paid invoice amounts only; unpaid and partially unpaid invoices
+  are never counted as collected revenue
+* **MRR:** active monthly totals, with weekly and daily totals normalized to a month and
+  yearly totals divided by 12
+
+Legacy decimal fields remain in the schemas for API compatibility, while new records
+also persist their minor-unit equivalents. Invoice line and customer fields are copied
+onto each invoice so later catalog or customer changes do not rewrite historical invoices.
+
+## 🧪 Validation
+
+Run backend unit tests with:
+
+```bash
+npm test
+```
+
+Run the frontend production build with:
+
+```bash
+cd client
+npm run build
+```
+
+The repository includes deterministic unit coverage for minor-unit calculations and
+billing cadence. Full authentication, MongoDB integration, and browser workflow tests
+require a running MongoDB instance and are not represented by fabricated results.
 
 ---
 

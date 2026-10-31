@@ -27,7 +27,18 @@ exports.createDiscount = async (req, res) => {
       targetProduct
     } = req.body;
 
-    const existing = await Discount.findOne({ code: code.toUpperCase() });
+    if (!code || !name || !discountType || value === undefined) {
+      return res.status(400).json({ success: false, error: 'Code, name, discount type, and value are required.' });
+    }
+    if (!['percentage', 'fixed'].includes(discountType)) {
+      return res.status(400).json({ success: false, error: 'Discount type must be percentage or fixed.' });
+    }
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue < 0 || (discountType === 'percentage' && numericValue > 100)) {
+      return res.status(400).json({ success: false, error: 'Discount value is invalid.' });
+    }
+
+    const existing = await Discount.findOne({ code: code.trim().toUpperCase() });
     if (existing) {
       return res.status(400).json({ success: false, error: 'Discount code already exists' });
     }
@@ -36,7 +47,7 @@ exports.createDiscount = async (req, res) => {
       code: code.toUpperCase(),
       name,
       discountType,
-      value: parseFloat(value),
+      value: numericValue,
       minPurchaseAmount: parseFloat(minPurchaseAmount || 0),
       minQuantity: parseInt(minQuantity || 0),
       startDate: startDate || new Date(),
@@ -57,7 +68,12 @@ exports.createDiscount = async (req, res) => {
 exports.validateCoupon = async (req, res) => {
   try {
     const { code, cartAmount, quantity } = req.body;
-    const discount = await Discount.findOne({ code: code.toUpperCase(), isActive: true });
+    const numericCartAmount = Number(cartAmount);
+    const numericQuantity = Number(quantity || 0);
+    if (!code || !Number.isFinite(numericCartAmount) || numericCartAmount < 0) {
+      return res.status(400).json({ success: false, error: 'A valid coupon code and cart amount are required.' });
+    }
+    const discount = await Discount.findOne({ code: code.trim().toUpperCase(), isActive: true });
 
     if (!discount) {
       return res.status(404).json({ success: false, error: 'Invalid or inactive promo code.' });
@@ -72,18 +88,24 @@ exports.validateCoupon = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Promo code usage limit has been exhausted.' });
     }
 
-    if (cartAmount < discount.minPurchaseAmount) {
+    if (numericCartAmount < discount.minPurchaseAmount) {
       return res.status(400).json({
         success: false,
         error: `Minimum purchase of $${discount.minPurchaseAmount} required for this discount.`
       });
     }
+    if (numericQuantity < discount.minQuantity) {
+      return res.status(400).json({
+        success: false,
+        error: `Minimum quantity of ${discount.minQuantity} required for this discount.`
+      });
+    }
 
     let calculatedDiscount = 0;
     if (discount.discountType === 'percentage') {
-      calculatedDiscount = (cartAmount * discount.value) / 100;
+      calculatedDiscount = (numericCartAmount * discount.value) / 100;
     } else {
-      calculatedDiscount = Math.min(discount.value, cartAmount);
+      calculatedDiscount = Math.min(discount.value, numericCartAmount);
     }
 
     res.json({

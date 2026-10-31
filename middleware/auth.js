@@ -1,21 +1,37 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'brightloop_super_secret_hackathon_key_2024';
+const JWT_SECRET = process.env.JWT_SECRET;
+const AUTH_COOKIE = 'brightloop_session';
+
+const getJwtSecret = () => {
+  if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured.');
+  }
+  return JWT_SECRET;
+};
+
+const getTokenFromRequest = (req) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) return authHeader.slice(7);
+  const cookies = req.headers.cookie
+    ? Object.fromEntries(req.headers.cookie.split(';').map(part => part.trim().split('=')))
+    : {};
+  return cookies[AUTH_COOKIE];
+};
 
 // Middleware to verify JWT token
 exports.verifyToken = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const token = getTokenFromRequest(req);
+    if (!token) {
       return res.status(401).json({
         success: false,
         error: 'Authentication required. Please sign in.'
       });
     }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
 
     const user = await User.findById(decoded.id).select('-password');
     if (!user) {
@@ -33,6 +49,25 @@ exports.verifyToken = async (req, res, next) => {
       error: 'Invalid or expired session token. Please sign in again.'
     });
   }
+};
+
+exports.requireOwnership = (getOwnerId) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized. Sign in required.' });
+    }
+
+    if (['admin', 'staff'].includes(req.user.role)) {
+      return next();
+    }
+
+    const ownerId = getOwnerId(req);
+    if (!ownerId || ownerId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, error: 'You do not have access to this resource.' });
+    }
+
+    next();
+  };
 };
 
 // Middleware to enforce Role-Based Access Control (RBAC)

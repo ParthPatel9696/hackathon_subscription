@@ -8,6 +8,10 @@ const invoiceLineSchema = new mongoose.Schema({
   taxRate: { type: Number, default: 0.10 },
   taxAmount: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
+  unitPriceMinor: { type: Number, min: 0 },
+  taxMinor: { type: Number, min: 0, default: 0 },
+  discountMinor: { type: Number, min: 0, default: 0 },
+  totalMinor: { type: Number, min: 0 },
   total: { type: Number, required: true }
 }, { _id: true });
 
@@ -39,7 +43,12 @@ const invoiceSchema = new mongoose.Schema({
   subtotal: { type: Number, required: true },
   taxTotal: { type: Number, default: 0 },
   discountTotal: { type: Number, default: 0 },
+  subtotalMinor: { type: Number, min: 0 },
+  taxTotalMinor: { type: Number, min: 0, default: 0 },
+  discountTotalMinor: { type: Number, min: 0, default: 0 },
+  grandTotalMinor: { type: Number, min: 0 },
   grandTotal: { type: Number, required: true },
+  paidAmountMinor: { type: Number, min: 0, default: 0 },
   paidAmount: { type: Number, default: 0 },
   status: {
     type: String,
@@ -49,5 +58,10 @@ const invoiceSchema = new mongoose.Schema({
   paymentTerms: { type: String, default: 'Net 30 Days' },
   createdAt: { type: Date, default: Date.now }
 });
+
+invoiceSchema.index(
+  { subscription: 1, billingPeriodStart: 1, billingPeriodEnd: 1 },
+  { unique: true, partialFilterExpression: { billingPeriodStart: { $exists: true }, billingPeriodEnd: { $exists: true } } }
+);
 
 module.exports = mongoose.model('Invoice', invoiceSchema);

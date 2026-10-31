@@ -16,3 +16,7 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Frontend build output
+client/node_modules/
+client/dist/

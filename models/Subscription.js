@@ -14,6 +14,11 @@ const subscriptionLineSchema = new mongoose.Schema({
   taxRate: { type: Number, default: 0.10 }, // 10%
   taxAmount: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
+  unitPriceMinor: { type: Number, min: 0 },
+  variantPriceExtraMinor: { type: Number, min: 0, default: 0 },
+  taxMinor: { type: Number, min: 0, default: 0 },
+  discountMinor: { type: Number, min: 0, default: 0 },
+  lineTotalMinor: { type: Number, min: 0 },
   lineTotal: { type: Number, required: true }
 }, { _id: true });
 
@@ -53,6 +58,10 @@ const subscriptionSchema = new mongoose.Schema({
   subtotal: { type: Number, default: 0 },
   taxTotal: { type: Number, default: 0 },
   discountTotal: { type: Number, default: 0 },
+  subtotalMinor: { type: Number, min: 0 },
+  taxTotalMinor: { type: Number, min: 0, default: 0 },
+  discountTotalMinor: { type: Number, min: 0, default: 0 },
+  recurringTotalMinor: { type: Number, min: 0 },
   recurringTotal: { type: Number, required: true },
   status: {
     type: String,

@@ -1,6 +1,9 @@
 const Subscription = require('../models/Subscription');
 const Product = require('../models/Product');
 const Plan = require('../models/Plan');
+const User = require('../models/User');
+const mongoose = require('mongoose');
+const { fromMinor, calculateLine } = require('../utils/money');
 
 // Valid state transitions map
 const VALID_TRANSITIONS = {
@@ -18,11 +21,14 @@ exports.getSubscriptions = async (req, res) => {
   try {
     const { status, search, customerId } = req.query;
     let query = {};
+    if (req.user.role === 'customer') {
+      query.customer = req.user._id;
+    }
 
     if (status && status !== 'ALL') {
       query.status = status;
     }
-    if (customerId) {
+    if (customerId && req.user.role !== 'customer') {
       query.customer = customerId;
     }
     if (search) {
@@ -43,7 +49,8 @@ exports.getSubscriptions = async (req, res) => {
       data: subscriptions
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const status = err instanceof TypeError ? 400 : 500;
+    res.status(status).json({ success: false, error: err.message });
   }
 };
 
@@ -52,9 +59,13 @@ exports.getSubscriptionById = async (req, res) => {
   try {
     const sub = await Subscription.findById(req.params.id);
     if (!sub) return res.status(404).json({ success: false, error: 'Subscription not found' });
+    if (req.user.role === 'customer' && sub.customer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, error: 'You do not have access to this subscription.' });
+    }
     res.json({ success: true, data: sub });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const status = err instanceof TypeError ? 400 : 500;
+    res.status(status).json({ success: false, error: err.message });
   }
 };
 
@@ -90,7 +101,8 @@ exports.transitionState = async (req, res) => {
       data: sub
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    const status = err instanceof TypeError ? 400 : 500;
+    res.status(status).json({ success: false, error: err.message });
   }
 };
 
@@ -108,38 +120,86 @@ exports.createSubscription = async (req, res) => {
       paymentTerms
     } = req.body;
 
-    // Calculate lines
-    let subtotal = 0;
-    let taxTotal = 0;
-    let discountTotal = 0;
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ success: false, error: 'At least one subscription line is required.' });
+    }
 
-    const computedLines = (lines || []).map(line => {
-      const unit = (line.unitPrice || 0) + (line.variantPriceExtra || 0);
-      const tax = (line.taxRate || 0.10) * unit * (line.quantity || 1);
-      const discount = line.discountAmount || 0;
-      const total = (unit * (line.quantity || 1)) + tax - discount;
+    const customer = req.user.role === 'customer'
+      ? req.user
+      : await User.findOne({ _id: customerId, role: 'customer' }).select('_id name email companyName');
+    if (!customer) {
+      return res.status(400).json({ success: false, error: 'A valid customer is required.' });
+    }
 
-      subtotal += unit * (line.quantity || 1);
-      taxTotal += tax;
-      discountTotal += discount;
+    const plan = planId && mongoose.isValidObjectId(planId)
+      ? await Plan.findById(planId)
+      : planName
+        ? await Plan.findOne({ name: planName })
+        : null;
+    if (!plan) {
+      return res.status(400).json({ success: false, error: 'A valid plan is required.' });
+    }
+
+    let subtotalMinor = 0;
+    let taxTotalMinor = 0;
+    let discountTotalMinor = 0;
+
+    const computedLines = await Promise.all((lines || []).map(async line => {
+      const product = line.productId && mongoose.isValidObjectId(line.productId)
+        ? await Product.findById(line.productId)
+        : line.productName
+          ? await Product.findOne({ name: line.productName })
+          : null;
+      if (!product) {
+        throw new TypeError('Every subscription line must reference a valid product.');
+      }
+
+      let variantPriceExtra = 0;
+      if (line.variantName) {
+        const variantOption = product.variants
+          .flatMap(group => group.options)
+          .find(option => option.name === line.variantName ||
+            line.variantName.startsWith(`${option.name} (`));
+        if (!variantOption) {
+          throw new TypeError(`Invalid variant "${line.variantName}" for ${product.name}.`);
+        }
+        variantPriceExtra = variantOption.priceExtra;
+      }
+
+      const calculation = calculateLine({
+        unitPrice: product.salesPrice,
+        variantPriceExtra,
+        quantity: line.quantity || 1,
+        taxRate: product.taxRate,
+        discountAmount: line.discountAmount || 0
+      });
+
+      subtotalMinor += calculation.subtotalMinor;
+      taxTotalMinor += calculation.taxMinor;
+      discountTotalMinor += calculation.discountMinor;
 
       return {
         product: line.productId,
-        productName: line.productName,
+        productName: product.name,
         variantName: line.variantName || '',
-        variantPriceExtra: line.variantPriceExtra || 0,
-        quantity: line.quantity || 1,
-        unitPrice: line.unitPrice,
-        taxRate: line.taxRate || 0.10,
-        taxAmount: tax,
-        discountAmount: discount,
-        lineTotal: total
+        variantPriceExtra,
+        variantPriceExtraMinor: calculation.variantPriceExtraMinor,
+        quantity: calculation.quantity,
+        unitPrice: product.salesPrice,
+        unitPriceMinor: calculation.unitPriceMinor,
+        taxRate: product.taxRate,
+        taxAmount: fromMinor(calculation.taxMinor),
+        taxMinor: calculation.taxMinor,
+        discountAmount: fromMinor(calculation.discountMinor),
+        discountMinor: calculation.discountMinor,
+        lineTotal: fromMinor(calculation.totalMinor),
+        lineTotalMinor: calculation.totalMinor
       };
-    });
+    }));
 
-    const recurringTotal = subtotal + taxTotal - discountTotal;
+    const recurringTotalMinor = subtotalMinor + taxTotalMinor - discountTotalMinor;
     const count = await Subscription.countDocuments();
-    const subscriptionNumber = `SUB-2024-${String(count + 101).padStart(4, '0')}`;
+    const subscriptionNumber = `SUB-${new Date().getFullYear()}-${String(count + 101).padStart(4, '0')}`;
 
     const startDate = new Date();
     const expiryDate = new Date();
@@ -150,21 +210,25 @@ exports.createSubscription = async (req, res) => {
 
     const newSub = new Subscription({
       subscriptionNumber,
-      customer: customerId,
-      customerName,
-      customerEmail,
+      customer: customer._id,
+      customerName: customer.companyName || customer.name,
+      customerEmail: customer.email,
       plan: planId,
-      planName,
-      billingFrequency: billingFrequency || 'monthly',
+      planName: plan.name,
+      billingFrequency: plan.billingFrequency,
       startDate,
       expiryDate,
       nextBillingDate,
       paymentTerms: paymentTerms || 'Net 30 Days',
       lines: computedLines,
-      subtotal,
-      taxTotal,
-      discountTotal,
-      recurringTotal,
+      subtotal: fromMinor(subtotalMinor),
+      taxTotal: fromMinor(taxTotalMinor),
+      discountTotal: fromMinor(discountTotalMinor),
+      subtotalMinor,
+      taxTotalMinor,
+      discountTotalMinor,
+      recurringTotal: fromMinor(recurringTotalMinor),
+      recurringTotalMinor,
       status: 'Draft',
       quotationValidUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000) // 15 days
     });

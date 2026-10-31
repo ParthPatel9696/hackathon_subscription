@@ -8,12 +8,15 @@ const apiRoutes = require('./routes/api');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB
-connectDB();
-
 // Middleware
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = process.env.CLIENT_ORIGIN
+  ? process.env.CLIENT_ORIGIN.split(',').map(origin => origin.trim())
+  : ['http://localhost:5173'];
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
+app.use(express.json({ limit: '100kb' }));
 app.use(morgan('dev'));
 
 // Performance measurement middleware (< 2s SLA guarantee)
@@ -41,6 +44,18 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`[Brightloop Server] Running on http://localhost:${PORT}`);
-});
+const start = async () => {
+  await connectDB();
+  return app.listen(PORT, () => {
+    console.log(`[Brightloop Server] Running on http://localhost:${PORT}`);
+  });
+};
+
+if (require.main === module) {
+  start().catch(err => {
+    console.error(`[Brightloop Server] Startup error: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, start };

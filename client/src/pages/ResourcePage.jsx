@@ -1,0 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
+import api from '../api';
+import { Header } from './Dashboard';
+
+export default function ResourcePage({ title, endpoint }) {
+  const { data, isLoading, error } = useQuery({ queryKey: [endpoint], queryFn: async () => (await api.get(endpoint)).data });
+  const rows = Array.isArray(data?.data) ? data.data : data?.user ? [data.user] : [];
+  return <><Header title={title} subtitle="Live records from the Brightloop API." />{error && <p className="error mb-5">{error.response?.data?.error || 'Unable to load records.'}</p>}<div className="card overflow-hidden p-0">{isLoading ? <p className="p-6">Loading...</p> : rows.length === 0 ? <p className="p-6 text-sm text-slate-500">No records found.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-6 py-4">Name / Number</th><th className="px-6 py-4">Status</th><th className="px-6 py-4">Amount</th><th className="px-6 py-4">Details</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.map((row) => <tr key={row._id || row.id || row.code || row.invoiceNumber}><td className="px-6 py-4 font-medium">{row.name || row.subscriptionNumber || row.invoiceNumber || row.email || row.code || 'Record'}</td><td className="px-6 py-4"><span className="badge">{row.status || row.role || 'Active'}</span></td><td className="px-6 py-4">{row.grandTotal !== undefined ? `$${row.grandTotal}` : row.recurringTotal !== undefined ? `$${row.recurringTotal}` : row.amount !== undefined ? `$${row.amount}` : '—'}</td><td className="max-w-xs truncate px-6 py-4 text-slate-500">{row.customerName || row.description || row.companyName || row.planName || '—'}</td></tr>)}</tbody></table></div>}</div></>;
+}
