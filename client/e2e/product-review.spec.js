@@ -138,7 +138,7 @@ test('customer registration opens the isolated customer portal', async ({ page }
   const errors = watchErrors(page);
   await page.goto('/register');
   await page.getByLabel('Full name', { exact: true }).fill('New Review Customer');
-  await page.getByLabel('Email address', { exact: true }).fill('registered@browser.test');
+  await page.getByLabel('Work email', { exact: true }).fill('registered@browser.test');
   await page.getByLabel('Password', { exact: true }).fill('Registration@Secure2026!');
   await page.getByLabel('Confirm password', { exact: true }).fill('Registration@Secure2026!');
   await page.getByRole('checkbox').check();
