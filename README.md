@@ -1,141 +1,372 @@
-# Brightloop
+<!-- markdownlint-disable MD033 MD041 -->
+<a id="top"></a>
 
-Brightloop is a MERN subscription and recurring billing application built with React, Vite, Tailwind CSS, React Router, Zustand, TanStack Query, Recharts, Motion, Express, and MongoDB. It provides role-based workspaces for administrators, staff, and customer accounts, with customer records, products, plans, quotation drafts, subscription lifecycle actions, recurring invoices, payment recording, discounts, and reporting.
+<div align="center">
 
-The repository is an evolving application. This README describes the implemented workflows and calls out known gaps; it does not claim that every workflow in the product brief is complete.
+<img src="docs/assets/brightloop-cover.svg" alt="Brightloop — every subscription, one clear picture" width="100%" />
 
-## Run locally
+<h1>Brightloop</h1>
 
-### Add linked sample data without clearing the database
+**The daily work behind recurring revenue. One connected workspace.**
 
-Run `npm run seed:sample` from the repository root. It uses `MONGODB_URI` from `.env`, preserves existing records and account passwords, and adds a repeatable fictional dataset across all 13 current collections. Running it again does not duplicate data. It is disabled when `NODE_ENV=production`.
+Products. Quotations. Subscriptions. Invoices. Payments. A clearer view of the business.
 
-The sample includes 12 customers, 6 products with configurable variants (including an Odoo price extra of INR 560), 8 plans covering all four billing periods, 3 discount rules, 3 quotation templates, 16 subscriptions, 51 invoices, 46 linked payments, 12 notes, 3 requests, and 16 activity events. Workspace settings are created only when missing; business identifier counters are maintained normally. Tax rates in this fictional dataset are illustrative settings.
+![React 18](https://img.shields.io/badge/React-18-173c35?style=flat-square)
+![Full-stack JavaScript](https://img.shields.io/badge/JavaScript-Full_stack-173c35?style=flat-square)
+![Express](https://img.shields.io/badge/API-Express-173c35?style=flat-square)
+![MongoDB](https://img.shields.io/badge/Database-MongoDB-173c35?style=flat-square)
+![INR](https://img.shields.io/badge/Currency-INR-167d6b?style=flat-square)
 
-| Demo role | Email | Development password |
-| --- | --- | --- |
-| Admin | `demo.admin@brightloop.test` | `Brightloop@Demo2026!` |
-| Staff | `demo.staff@brightloop.test` | `Brightloop@Demo2026!` |
-| Customer | `demo.customer@brightloop.test` | `Brightloop@Demo2026!` |
+[Explore the workflow](#how-brightloop-works) &nbsp; · &nbsp; [Run locally](#quick-start) &nbsp; · &nbsp; [Try a role](#choose-your-workspace) &nbsp; · &nbsp; [See the UI](#inside-the-product) &nbsp; · &nbsp; [Review the build](#verification-and-roadmap)
 
-Set `BRIGHTLOOP_SAMPLE_PASSWORD` before the first run to use your own password. A rerun preserves passwords already stored for these accounts.
+</div>
 
-For older local databases that reject subscriptions with a duplicate `scheduledPlanChange.operationKey: null`, run `npm run db:repair-indexes`. This validates the corrected unique index for real string operation keys before removing the legacy index; it does not edit subscription documents.
+---
 
-Requirements: Node.js 18 or newer and a MongoDB instance.
+## The idea
 
-1. Copy `.env.example` to `.env` and configure `MONGODB_URI`, `JWT_SECRET`, `PORT`, and `CLIENT_ORIGIN`. `JWT_SECRET` must be private and at least 32 characters.
-2. Install server dependencies from the repository root with `npm install`.
-3. Start the API with `npm run dev` (or `npm start`). It listens on port 5000 by default. In a separate server terminal, run `npm run billing:worker` to process recurring invoices, catch up missed billing periods, expire old quotations, refresh overdue invoices, and apply plan auto-close dates. The worker checks every 15 minutes by default; set `BILLING_WORKER_INTERVAL_MINUTES` to change it.
-4. In a second terminal, run `cd client`, `npm install`, and `npm run dev`. Vite serves the client on port 5173.
-5. Seed only the local demo accounts with `npm run seed:demo` from the repository root, or create an account through registration. This command updates only the three named demo users and never clears business records. `npm run seed` recreates the full demo dataset and deletes existing application records; use it only with a disposable development database.
+A subscription business should be able to answer four questions without opening a spreadsheet:
 
-The full `npm run seed` command **deletes and recreates application records**. The non-destructive `npm run seed:demo` command creates or refreshes only these development accounts:
+**What is active? What was collected? What is still owed? What needs attention?**
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Admin | `admin@brightloop.com` | `Admin@Secure2024!` |
-| Staff | `jordan.lee@brightloop.com` | `Staff@Secure2024!` |
-| Customer | `finance@acmeretail.com` | `Acme@Customer2024!` |
+Brightloop connects the records behind those answers. Administrators configure the catalogue, staff run billing operations, and customers see their own subscriptions and financial history. Dashboards read the database; invoices retain their price snapshots; partial payments retain a visible balance.
 
-Do not use seeded credentials or the seed script against production data.
+Built for an India-focused demo: **INR · Indian digit grouping · Asia/Kolkata · role-based workspaces.**
 
-The API base URL defaults to `http://localhost:5000/api`. Set `VITE_API_URL` in the client environment when the API runs elsewhere. The browser authenticates with the server's HTTP-only session cookie; CORS `CLIENT_ORIGIN` must include the client origin.
+> **Build status:** working hackathon demo with tested workflows. Automatic discount re-evaluation, scoped tax-rule administration, and durable billing-run history remain incomplete. See [what comes next](#what-comes-next).
 
-## Implemented application areas
+## How Brightloop works
 
-- Public landing, features, pricing-configuration notice, contact instructions, privacy notice, and terms pages.
-- Customer registration, login, forgot-password request, reset-password form, session-expired, unauthorized, and not-found pages.
-- Role-filtered application navigation with persisted light/dark theme, collapsible sidebar, mobile navigation, breadcrumbs, profile menu, command palette, and record search.
-- Dashboard metrics sourced from MongoDB, subscription status counts, customer count, collected payments, outstanding amounts, overdue invoices, and renewal/overdue notifications.
-- Customer directory with server-side search and pagination, admin customer creation/editing/archiving, and linked customer-owned profile updates.
-- Customer portal dashboard, account profile, plan catalog, quotation drafts, subscriptions, invoices, and payments. Customer APIs scope billing history to the signed-in account; approved customer plan/quantity requests are applied on the next cycle.
-- Admin product and plan create/edit forms. Product and plan deletions are intentionally unavailable to preserve historical references.
-- Reusable admin quotation templates with product/variant lines and validity days, server-calculated quotation totals, role-scoped record lists, supported lifecycle transitions, recurring billing, invoice status actions, payment recording, discount creation/validation, CSV export, and reports.
-- Server-generated invoice PDFs are available to the invoice owner and internal staff. Admin/staff can email confirmed invoices with the PDF attached when SMTP is configured.
+```mermaid
+flowchart LR
+    A[Customer account] --> B[Quotation template]
+    B --> C[Customer quotation]
+    C --> D[Confirmed subscription]
+    D --> E[Active subscription]
+    E --> F[Recurring billing]
+    F --> G[Draft invoice]
+    G --> H[Confirmed invoice]
+    H --> I[Partial or full payment]
+    I --> J[Finance reporting]
+    I --> K[Customer portal]
 
-## Roles and access
+    classDef default fill:#f5f7f3,stroke:#d7e1d7,color:#23372e,stroke-width:1px;
+    classDef focus fill:#173c35,stroke:#173c35,color:#ffffff;
+    class E,H,J focus;
+```
 
-- **Admin:** dashboard, customer create/read/update/archive, product and plan management, quotations, subscriptions, invoices, payments, discounts, reports, and settings.
-- **Staff:** operational records, customer directory, quotations, subscriptions, invoices, payments, and reports. Product and plan write operations, discount administration, and forced billing are admin-only.
-- **Customer:** own subscription drafts and billing history, catalog/plan viewing, editable name, company, phone, and billing address, and self-service account closure after billing obligations are resolved. Profile updates synchronize the customer directory and current subscription labels. Customers cannot edit or delete financial records.
+**MRR describes recurring contracts. Collected revenue describes posted payments.** Brightloop keeps both visible without treating them as the same metric.
 
-Frontend route guards improve navigation, but API authorization is enforced by Express middleware. The search and notification endpoints also restrict customer results to the signed-in customer.
+## Choose your workspace
 
-## API overview
+Three roles share one product. Expand a role to see its demo login and what to explore.
 
-All paths below are prefixed with `/api`.
+<details open>
+<summary><strong>01 · Admin — build the business workflow</strong></summary>
 
-| Method | Endpoint | Access | Purpose |
-| --- | --- | --- | --- |
-| `POST` | `/auth/register`, `/auth/login` | Public | Register a customer or sign in |
-| `POST` | `/auth/forgot-password`, `/auth/reset-password` | Public | Request and apply a password reset |
-| `POST` | `/auth/logout`, `GET /auth/me` | Signed in | End session or fetch current account |
-| `GET`, `PATCH`, `DELETE` | `/customers/me` | Customer | Read linked portfolio, update profile, or close the account when billing obligations are clear |
-| `GET` | `/customers`, `/customers/:id` | Admin, staff | Search/paginate customers and load linked billing history |
-| `POST`, `PATCH`, `DELETE` | `/customers`, `/customers/:id` | Admin | Create/edit customer accounts or archive them |
-| `GET` | `/search?q=...` | Signed in | Search supported business resources |
-| `GET` | `/notifications` | Signed in | Overdue invoices and renewals due within seven days |
-| `GET` | `/products`, `/plans` | Signed in | Read the catalog |
-| `POST`, `PATCH` | `/products`, `/products/:id` | Admin | Create or update products |
-| `POST`, `PATCH` | `/plans`, `/plans/:id` | Admin | Create or update plans |
-| `GET` | `/dashboard/metrics` | Admin, staff | Current financial and subscription metrics |
-| `GET`, `POST` | `/subscriptions` | Signed in | Read permitted subscriptions or create a draft |
-| `POST` | `/subscriptions/transition` | Admin, staff | Apply a valid lifecycle transition |
-| `POST` | `/billing/run-batch` | Admin, staff | Generate due recurring invoices; force mode is admin-only |
-| `GET` | `/invoices` | Signed in | List permitted invoices |
-| `PATCH` | `/invoices/:id/status` | Admin, staff | Update a supported invoice status |
-| `GET`, `POST` | `/payments` | Signed in / admin, staff | List permitted payments or record a payment |
-| `GET`, `POST` | `/discounts` | Admin/staff / admin | List or create discount rules |
-| `POST` | `/discounts/validate` | Signed in | Validate a discount code |
-| `PATCH` | `/discounts/:id/status` | Admin | Activate or deactivate a discount |
+<br />
 
-## Financial handling
+**Email:** `demo.admin@brightloop.test`<br />
+**Password:** `Brightloop@Demo2026!`
 
-Subscription line prices, tax, discounts, and totals are recalculated by the server using integer minor units. Client-supplied discount amounts are ignored; a quotation can apply a valid promo code with product scope, minimums, expiry, active state, and an atomically reserved usage limit. Partial and full payments cannot exceed invoice balances. MongoDB transactions are used for invoice/payment writes when supported; standalone deployments use unique billing periods, recoverable schedule updates, and a pending-payment journal.
+Configure products, variants and plans; maintain quotation templates and discount rules; manage subscriptions, invoices, staff and workspace settings.
 
-Historical invoices store their own line and customer details. Product or plan edits therefore do not rewrite existing invoice snapshots.
+**Try this:** open a demo product, inspect its configurable variant extra, create a quotation from a multi-line template, then follow it through confirmation and activation.
 
-## Known gaps
+</details>
 
-- Password reset and invoice email delivery are optional and use Nodemailer when SMTP is configured (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`). Without SMTP, non-production mode returns a simulated reset URL; production responses do not include a link.
-- The public contact page explains that support contact details are not configured; it does not submit a contact form.
-- Customer email and password changes require separate verification/recovery workflows. Staff can view customer records, while customer create/edit/archive is admin-only. Archiving is blocked while active subscriptions or unpaid invoices remain; account records are archived instead of hard-deleted so their financial history stays linked.
-- Quotations support reusable templates, validity dates, server-generated PDFs, SMTP email, customer acceptance/decline, and automatic expiry. Creation supports editable multi-line templates. Editing issued quotations and the revision/duplicate workflow remain incomplete.
-- Product and plan management includes create/edit, detail routes, archival, and a dedicated variant editor. Price revision history and image uploads remain incomplete.
-- Subscription detail and plan-change history, customer activity, subscription health, billing calendar, revenue intelligence, command search, and table visibility/order/density/saved-view controls are available. Saved table preferences are per user in local browser storage and do not synchronize across devices.
-- Payment allocation detail and dashboard widget preferences are not implemented.
-- Revenue Intelligence reports observed subscription events and dated collections; historical MRR/retention are unavailable when older subscription snapshots are missing.
-- The notification center reports actual overdue invoices and upcoming renewals; failed billing attempts are not represented in the current data model.
-- Authentication endpoints have per-IP in-memory rate limits. Multi-instance deployments need a shared rate-limit store. MongoDB transaction paths require a replica set or mongos; the integration run against standalone MongoDB covers the recoverable fallback path.
-- Browser coverage now includes public and role-based route checks at desktop/mobile widths, registration, editable template quotations, payment settlement, CSV downloads, dialog focus, and account switching. See `client/e2e/product-review.spec.js`.
+<details>
+<summary><strong>02 · Staff — run day-to-day operations</strong></summary>
 
-## Checks
+<br />
 
-The final review and remaining requirements are documented in [FINAL_REVIEW.md](./FINAL_REVIEW.md). Browser coverage is available through `npm run test:e2e --prefix client`. It requires an isolated MongoDB instance and a browser executable:
+**Email:** `demo.staff@brightloop.test`<br />
+**Password:** `Brightloop@Demo2026!`
+
+Work with customers, quotations, subscriptions, invoices, manual payments and reports. Catalogue writes and staff administration remain restricted to admins; product cost prices are excluded from staff responses.
+
+**Try this:** open a confirmed invoice, record a partial payment, and inspect the remaining balance and payment history.
+
+</details>
+
+<details>
+<summary><strong>03 · Customer — understand your account</strong></summary>
+
+<br />
+
+**Email:** `demo.customer@brightloop.test`<br />
+**Password:** `Brightloop@Demo2026!`
+
+View your own dashboard, subscriptions, invoices and payments; download invoice PDFs; update your profile; submit subscription-change or support requests.
+
+**Try this:** download an invoice and compare its payment history with the balance shown in your portal.
+
+</details>
+
+These accounts are created by `npm run seed:sample`. They are development credentials. Set `BRIGHTLOOP_SAMPLE_PASSWORD` before the first seed to choose another password; reruns preserve existing account passwords.
+
+## Inside the product
+
+Actual application captures from the isolated browser-review dataset. The numbers are test records, not live business results.
+
+<details open>
+<summary><strong>Customer workspace · desktop</strong></summary>
+
+<br />
+
+![Brightloop customer dashboard with subscription, invoice and payment records](docs/assets/customer-workspace.png)
+
+</details>
+
+<details>
+<summary><strong>Customer workspace · mobile</strong></summary>
+
+<br />
+
+<img src="docs/assets/customer-mobile.png" alt="Brightloop customer portal on a 390-pixel mobile screen" width="320" />
+
+</details>
+
+## What you can explore
+
+| Area | Current experience |
+| --- | --- |
+| **Catalogue** | Products, editable variant groups, per-unit price extras, plans and billing frequencies |
+| **Quotations** | Reusable templates, editable product lines, validity windows and server-calculated pricing |
+| **Subscriptions** | Confirmation, activation, pause/close controls and plan-permission checks |
+| **Recurring billing** | Due-date selection, chronological catch-up, duplicate-period protection and per-subscription failures |
+| **Invoices** | Price snapshots, confirmation/cancellation rules, PDF downloads and optional SMTP delivery |
+| **Payments** | Manual UPI, bank transfer, card, cheque, cash and other records; partial and full settlement |
+| **Finance** | MRR, collected cash, outstanding balances, overdue records, monthly reports and CSV exports |
+| **Operations** | Billing calendar, subscription health, activity records, derived notifications and global search |
+| **Customer portal** | Owner-scoped records, invoice downloads, profile updates and change requests |
+| **Interface** | Responsive navigation, light/dark theme, command palette, saved table views and reduced-motion support |
+
+Selecting the seeded **Odoo** variant adds its configured **₹560 per unit**. Variant extras and tax rates remain configuration, rather than universal billing rules.
+
+## Quick start
+
+**You need:** Node.js **20+**, npm, and a running MongoDB server. The installed React Router and Playwright packages require Node 20 or newer.
+
+### 1. Get the project
+
+```bash
+git clone https://github.com/ParthPatel9696/hackathon_subscription.git
+cd hackathon_subscription
+npm ci
+npm ci --prefix client
+```
+
+### 2. Configure the API
+
+<details open>
+<summary><strong>Windows · PowerShell</strong></summary>
 
 ```powershell
-$env:BRIGHTLOOP_BROWSER_DB='mongodb://127.0.0.1:27029/brightloop_browser_test'
-$env:BRIGHTLOOP_BROWSER_EXECUTABLE='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
-npm run test:e2e --prefix client
+Copy-Item .env.example .env
 ```
 
-The browser runner owns local test servers on ports 5019 and 5179 and replaces only the explicitly named disposable browser database. On other operating systems, set the executable to a compatible Chromium browser or install Playwright's Chromium and omit `BRIGHTLOOP_BROWSER_EXECUTABLE`. The separate API integration suite now requires a local database name ending in `_test`.
+</details>
 
-From the repository root:
+<details>
+<summary><strong>macOS / Linux · shell</strong></summary>
 
-```sh
+```bash
+cp .env.example .env
+```
+
+</details>
+
+Edit `.env`:
+
+```dotenv
+PORT=5000
+MONGODB_URI=mongodb://127.0.0.1:27017/brightloop_subscriptions
+CLIENT_ORIGIN=http://localhost:5173
+JWT_SECRET=replace-with-your-generated-secret
+BILLING_WORKER_INTERVAL_MINUTES=15
+```
+
+Generate a secret, then paste it into `JWT_SECRET`:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Keep `.env` private. The signing secret must be at least 32 characters.
+
+### 3. Add the demo dataset
+
+```bash
+npm run seed:sample
+```
+
+This seed **adds linked sample records without clearing existing business data**. Stable identities make it safe to rerun, and existing passwords/settings are preserved. Sample seeding is disabled in production.
+
+### 4. Start the three processes
+
+Run each command in a separate terminal, from the repository root:
+
+| Terminal | Command | Purpose |
+| --- | --- | --- |
+| **API** | `npm run dev` | Express API on port `5000` |
+| **Frontend** | `npm run dev --prefix client` | React application on port `5173` |
+| **Worker** | `npm run billing:worker` | Recurring billing and scheduled maintenance |
+
+**Open [localhost:5173](http://localhost:5173)** and choose a demo account above.
+
+The worker checks every 15 minutes by default. The UI also supports manual billing runs; forcing not-yet-due subscriptions is admin-only.
+
+<details>
+<summary><strong>Configuration notes · API URL, email and older databases</strong></summary>
+
+- **Separate API host:** set `VITE_API_URL` in `client/.env.local`, for example `http://localhost:5000/api`. Allow the browser origin in the API's `CLIENT_ORIGIN` setting.
+- **Sessions:** authentication uses an HTTP-only cookie. Customer ownership and role permissions are enforced by the API.
+- **Email:** set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_FROM` to enable reset/invoice delivery. Without SMTP, development can return a simulated reset link; production does not expose it. PDF downloads work without SMTP.
+- **Older database index:** if new subscriptions fail with a duplicate `scheduledPlanChange.operationKey: null`, run `npm run db:repair-indexes`. The repair validates the corrected index before replacing the legacy index, without editing subscription documents.
+
+</details>
+
+## A demo with a story
+
+Use this suggested walkthrough when presenting to judges:
+
+1. **Start with the business question.** Open the admin dashboard: active subscriptions, collections and outstanding balances come from stored records.
+2. **Show the pricing detail.** Open a product and its variant editor. Explain how a configured extra changes the relevant line price.
+3. **Build the offer.** Choose a quotation template, adjust its product quantities, and create a customer quotation.
+4. **Activate the relationship.** Confirm and activate the subscription through its detail-page actions.
+5. **Follow the invoice.** Generate a due invoice, or deliberately use admin force mode for a demo subscription whose date has not arrived. Confirm the draft invoice.
+6. **Make payment visible.** Record a partial payment, show the balance, then record the remainder and verify the invoice becomes Paid.
+7. **Change perspective.** Sign in as that customer and show the same subscription, invoice PDF and payment history in the customer portal.
+
+**The point to demonstrate:** the same records connect the business workflow and the customer's account.
+
+<details>
+<summary><strong>What's in the sample database?</strong></summary>
+
+<br />
+
+| Sample records | Count |
+| --- | ---: |
+| Admin / staff / customer accounts | 1 / 2 / 12 |
+| Products with variants | 6 |
+| Plans across daily, weekly, monthly and yearly billing | 8 |
+| Discount rules / quotation templates | 3 / 3 |
+| Subscriptions | 16 |
+| Invoices | 51 |
+| Linked payments | 46 |
+| Internal notes / customer requests / activity events | 12 / 3 / 16 |
+
+All **13 current collections** are populated, including workspace settings and identifier counters. Existing settings are retained. Invoice samples include paid, partial, overdue, draft and cancelled records. Tax rates are illustrative settings.
+
+The dataset is defined in [the sample seed](seeds/seed-sample.js). Collection totals can be larger when a database already contains records.
+
+</details>
+
+## Under the hood
+
+```mermaid
+flowchart TB
+    subgraph UI[React application]
+        Public[Public website]
+        Internal[Admin and staff workspace]
+        Portal[Customer portal]
+    end
+    Public --> API[Express API]
+    Internal --> API
+    Portal --> API
+    API --> Access[JWT session and role checks]
+    Access --> Domain[Catalogue · quotations · billing · payments]
+    Domain --> DB[(MongoDB / Mongoose)]
+    Worker[Lightweight billing worker] --> Domain
+    Domain --> PDF[Invoice PDF generation]
+    Domain -. SMTP configured .-> Mail[Email delivery]
+
+    classDef default fill:#f5f7f3,stroke:#d7e1d7,color:#23372e;
+    classDef focus fill:#173c35,stroke:#173c35,color:#ffffff;
+    class API,DB focus;
+```
+
+| Layer | Stack |
+| --- | --- |
+| **Interface** | React 18 · Vite · JavaScript · Tailwind CSS · Lucide |
+| **Navigation and state** | React Router · Zustand · TanStack Query · Axios |
+| **Charts and motion** | Recharts · Motion for React |
+| **API and data** | Node.js · Express · MongoDB · Mongoose |
+| **Identity and documents** | JWT · bcryptjs · PDFKit · Nodemailer |
+| **Verification** | Node test runner · Playwright · headless Edge |
+
+<details>
+<summary><strong>Engineering details worth opening</strong></summary>
+
+<br />
+
+- **Money:** new financial paths use integer paise for calculation. Compatible rupee fields remain available; historical records are not bulk-converted.
+- **Price snapshots:** invoice lines retain the prices used when billed. Editing a product does not rewrite old invoices.
+- **Payments:** invoice-linked manual entries support partial/full settlement, balance guards and duplicate-reference protection. A manually entered reference is not gateway verification.
+- **Recovery:** transaction-capable MongoDB deployments use transaction paths. Standalone deployments use recoverable billing schedule writes and a pending-payment journal.
+- **Billing:** a unique subscription/period business key protects repeat runs. Failed subscriptions are reported independently so processing can continue.
+- **Localization:** display uses `en-IN` and `Asia/Kolkata`. PDFs use readable `INR` text with Indian digit grouping.
+- **Access:** customers are scoped to their own records. Product cost prices are excluded from non-admin catalogue responses.
+- **Interaction:** `Ctrl+K` / `⌘K` opens the command palette. Tables support filtering, sorting, visibility preferences, saved views and CSV exports; saved preferences are local to the browser.
+
+</details>
+
+<details>
+<summary><strong>Repository map</strong></summary>
+
+```text
+brightloop/
+├── client/
+│   ├── src/components/    Shared UI, forms and navigation
+│   ├── src/pages/         Public and authenticated experiences
+│   ├── src/utils/         Currency and date presentation
+│   └── e2e/               Browser workflow checks
+├── controllers/           HTTP request handlers
+├── middleware/            Authentication, permissions and validation
+├── models/                Mongoose schemas and indexes
+├── routes/                API routing
+├── services/              Billing, pricing helpers, PDFs and email
+├── workers/               Recurring billing scheduler
+├── seeds/                 Demo accounts and linked sample records
+├── scripts/               Database maintenance utilities
+├── test/                  Unit and API integration checks
+└── docs/assets/           README cover and product screenshots
+```
+
+</details>
+
+## Verification and roadmap
+
+Last recorded engineering review: **31 October 2026**. These are results from that review, not a live CI status badge.
+
+| Check | Recorded result |
+| --- | --- |
+| Backend suite, including isolated MongoDB integration | **23 passed** |
+| Browser suite | **11 passed** |
+| Route coverage | **150 visits** across public/admin/staff/customer experiences |
+| Viewports checked | **1366 px desktop · 390 px mobile** |
+| Client production build | **Passed** |
+| Sample data | **Preservation, idempotency and payment reconciliation verified** |
+
+Explore the [backend regression checks](test/api.integration.test.js) and [browser workflow checks](client/e2e/product-review.spec.js) for the behavior covered.
+
+<details>
+<summary><strong>Run unit checks and the production build</strong></summary>
+
+```bash
 npm test
+npm run build --prefix client
 ```
 
-For the client production build:
+Without `BRIGHTLOOP_INTEGRATION_DB`, the unit checks run and the database integration test is skipped.
 
-```sh
-cd client
-npm run build
-```
+</details>
 
-The opt-in API integration test exercises role permissions, reset/logout revocation, customer ownership, discount eligibility and usage contention, concurrent identifier and billing runs, billing recovery, payment concurrency and recovery, and balance reconciliation. It drops its configured database, so point it only at a dedicated disposable test database:
+<details>
+<summary><strong>Run API integration checks · PowerShell</strong></summary>
+
+Use a dedicated disposable database on your local MongoDB server. This test drops its target database and requires a local name ending in `_test`.
 
 ```powershell
 $env:BRIGHTLOOP_INTEGRATION_DB='mongodb://127.0.0.1:27017/brightloop_test'
@@ -143,6 +374,76 @@ npm test
 Remove-Item Env:BRIGHTLOOP_INTEGRATION_DB
 ```
 
-Without `BRIGHTLOOP_INTEGRATION_DB`, the backend suite runs unit tests and skips the database integration test.
+</details>
 
-The current API and amount/date conventions are described in [API.md](./API.md). Implementation and data-audit boundaries are in [PHASE2_AUDIT.md](./PHASE2_AUDIT.md). No migration should be run against existing business records until their currency and unit have been audited.
+<details>
+<summary><strong>Run browser checks · PowerShell + installed Edge</strong></summary>
+
+Use a running local MongoDB server and a dedicated disposable database. The test runner owns its API/frontend servers on ports `5019` and `5179` and replaces the explicitly named browser test database.
+
+```powershell
+$env:BRIGHTLOOP_BROWSER_DB='mongodb://127.0.0.1:27017/brightloop_browser_test'
+$env:BRIGHTLOOP_BROWSER_EXECUTABLE='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+npm run test:e2e --prefix client
+Remove-Item Env:BRIGHTLOOP_BROWSER_DB
+Remove-Item Env:BRIGHTLOOP_BROWSER_EXECUTABLE
+```
+
+On another operating system, set a compatible Chromium executable, or install Playwright's Chromium from `client` with `npx playwright install chromium` and omit `BRIGHTLOOP_BROWSER_EXECUTABLE`.
+
+The suite covers public pages, role guards, mobile layouts, editable template quotations, payments, CSV downloads, dialog focus, registration and account switching.
+
+</details>
+
+### What comes next
+
+- [ ] Re-evaluate discount eligibility on each recurring invoice and count usage at confirmation.
+- [ ] Add dated product/category tax rules and their administration screen.
+- [ ] Persist billing runs, attempts, retries and reminder history.
+- [ ] Complete active-term renewal and reconcile lifecycle behavior with the original brief.
+- [ ] Extend report filters, quotation revisions, notification preferences and support workflows.
+- [ ] Validate the 10,000-subscription / 50,000-invoice performance targets.
+
+SMTP delivery and replica-set transaction behavior need environment-specific verification. Public pricing, contact details and legal notices require operator configuration. Notification preferences, a complete support workflow and cross-device table preferences also remain open.
+
+<details>
+<summary><strong>Other seed commands · understand their scope</strong></summary>
+
+| Command | Behavior |
+| --- | --- |
+| `npm run seed:sample` | Adds the linked sample dataset; preserves existing business records and passwords |
+| `npm run seed:demo` | Creates or refreshes the older three demo accounts, resets their development passwords and revokes their previous sessions |
+| `npm run seed` | **Deletes and recreates application records**; use only on a disposable database |
+
+The older `seed:demo` account set is:
+
+| Role | Email | Password |
+| --- | --- | --- |
+| Admin | `admin@brightloop.com` | `Admin@Secure2024!` |
+| Staff | `jordan.lee@brightloop.com` | `Staff@Secure2024!` |
+| Customer | `finance@acmeretail.com` | `Acme@Customer2024!` |
+
+Use the sample accounts near the top of this README for the linked hackathon dataset.
+
+</details>
+
+## Go deeper
+
+| Document | Open it for |
+| --- | --- |
+| [API route map](routes/api.js) | Endpoints, role checks and request middleware |
+| [Application route map](client/src/App.jsx) | Public and authenticated pages |
+| [Billing service](services/billingService.js) | Recurring runs, catch-up and recovery paths |
+| [Money utilities](utils/money.js) | Integer paise arithmetic and INR formatting |
+| [Browser checks](client/e2e/product-review.spec.js) | Role-specific pages and customer workflows |
+
+---
+
+<div align="center">
+
+**brightloop**<br />
+Every subscription. Every invoice. One clear picture.
+
+[Back to top](#top)
+
+</div>
