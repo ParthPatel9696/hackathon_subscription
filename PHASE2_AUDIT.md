@@ -11,6 +11,8 @@ This report records what the source tree and local verification support. It does
 
 ## Delivered capabilities in source
 
+- The route-by-route portal acceptance matrix, with explicit remaining work, is in [IMPLEMENTATION_MATRIX.md](./IMPLEMENTATION_MATRIX.md). Screens remain marked partial until all requested actions work end to end.
+
 - Shared INR/en-IN and Asia/Kolkata formatting, rupee input conversion, server-side paise calculations, and India business-date filtering.
 - Customer 360 portfolio summary, internal notes with role checks, admin tags, account archive guards, activity timeline, and direct subscription links.
 - Server validated immediate/next-cycle plan change preview and apply flows, documented UTC half-open-period proration policy, quantity support, schedule processing and change history.

@@ -2,15 +2,15 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BarChart3, Bell, CalendarDays, ChevronsLeft, ChevronsRight, CreditCard, FileText, HeartPulse, LayoutDashboard, LogOut, Menu, Moon, Package, Percent, Search, Settings, Sun, Tags, Users, Wallet, X } from 'lucide-react';
+import { Activity as ActivityIcon, ArrowRight, BarChart3, Bell, CalendarDays, ChevronsLeft, ChevronsRight, ClipboardList, CreditCard, FileText, HeartPulse, LayoutDashboard, LogOut, Menu, Moon, Package, Percent, Search, Settings, Sun, Tags, Users, Wallet, X } from 'lucide-react';
 import api from '../api';
 import { useAuthStore } from '../store';
 
 const sections = [
   { title: 'Overview', links: [['/app/dashboard', 'Dashboard', LayoutDashboard, ['admin', 'staff', 'customer']]] },
   { title: 'Business', links: [
-    ['/app/customers', 'Customers', Users, ['admin', 'staff']], ['/app/products', 'Products', Package, ['admin']], ['/app/plans', 'Plans', Tags, ['admin', 'staff', 'customer']],
-    ['/app/quotations', 'Quotations', FileText, ['admin', 'staff']], ['/app/subscriptions', 'Subscriptions', Wallet, ['admin', 'staff', 'customer']]
+    ['/app/customers', 'Customers', Users, ['admin', 'staff']], ['/app/products', 'Products', Package, ['admin', 'staff']], ['/app/plans', 'Plans', Tags, ['admin', 'staff', 'customer']],
+    ['/app/quotations', 'Quotations', FileText, ['admin', 'staff']], ['/app/subscriptions', 'Subscriptions', Wallet, ['admin', 'staff', 'customer']], ['/app/subscription-requests', 'Requests', ClipboardList, ['admin', 'staff', 'customer']]
   ] },
   { title: 'Finance', links: [
     ['/app/invoices', 'Invoices', FileText, ['admin', 'staff', 'customer']], ['/app/payments', 'Payments', CreditCard, ['admin', 'staff', 'customer']],
@@ -19,7 +19,7 @@ const sections = [
   { title: 'Operations', links: [
     ['/app/billing-calendar', 'Billing Calendar', CalendarDays, ['admin', 'staff']], ['/app/subscription-health', 'Subscription Health', HeartPulse, ['admin', 'staff']], ['/app/revenue-analytics', 'Revenue Intelligence', BarChart3, ['admin', 'staff']]
   ] },
-  { title: 'System', links: [['/app/settings', 'Settings', Settings, ['admin', 'staff', 'customer']]] }
+  { title: 'System', links: [['/app/activity', 'Activity Log', ActivityIcon, ['admin', 'staff']], ['/app/notifications', 'Notifications', Bell, ['admin', 'staff', 'customer']], ['/app/settings', 'Settings', Settings, ['admin', 'staff', 'customer']], ['/app/staff', 'Staff management', Users, ['admin']]] }
 ];
 
 export default function Shell() {
@@ -51,6 +51,7 @@ export default function Shell() {
     queryFn: async () => (await api.get('/notifications')).data,
     staleTime: 30000
   });
+  const workspaceSettings = useQuery({ queryKey: ['workspace-settings'], queryFn: async () => (await api.get('/settings/workspace')).data.data, staleTime: 60000 });
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(searchTerm.trim()), 180);
     return () => window.clearTimeout(timer);
@@ -60,6 +61,9 @@ export default function Shell() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('brightloop_theme', theme);
   }, [theme]);
+  useEffect(() => {
+    if (workspaceSettings.data?.dateFormat) localStorage.setItem('brightloop_date_format', workspaceSettings.data.dateFormat);
+  }, [workspaceSettings.data?.dateFormat]);
   useEffect(() => { setMobileOpen(false); setNotificationsOpen(false); setProfileOpen(false); }, [location.pathname]);
   useEffect(() => {
     const onShortcut = (event) => {
@@ -131,9 +135,9 @@ export default function Shell() {
             if (!visible.length) return null;
             return <section className="nav-section" key={section.title} aria-label={section.title}>
               <h2 className="nav-section-title">{section.title}</h2>
-              {visible.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === '/app/dashboard'} title={collapsed ? label : undefined} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon size={17} strokeWidth={1.8} aria-hidden="true" /><span className="nav-label">{label}</span>
-              </NavLink>)}
+              {visible.map(([to, label, Icon]) => { const customerLabels = { Plans: 'Browse plans', Subscriptions: 'My subscriptions', Payments: 'My payments', Invoices: 'My invoices', Settings: 'My profile', Requests: 'My requests' }; const navLabel = user?.role === 'customer' ? customerLabels[label] || label : label; return <NavLink key={to} to={to} end={to === '/app/dashboard'} title={collapsed ? navLabel : undefined} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon size={17} strokeWidth={1.8} aria-hidden="true" /><span className="nav-label">{navLabel}</span>
+              </NavLink>; })}
             </section>;
           })}
         </nav>

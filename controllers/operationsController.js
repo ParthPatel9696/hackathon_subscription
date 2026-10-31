@@ -4,7 +4,9 @@ const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 const Invoice = require('../models/Invoice');
 const Payment = require('../models/Payment');
+const AuditEvent = require('../models/AuditEvent');
 const { toMinor, fromMinor, normalizeMonthlyMinor } = require('../utils/money');
+const { applyDateRange } = require('../utils/listQuery');
 
 const pageArgs = (query) => ({
   page: Math.max(1, Number.parseInt(query.page, 10) || 1),
@@ -67,6 +69,20 @@ exports.activity = async (req, res) => {
   } catch (error) { res.status(500).json({ success: false, error: 'Unable to load customer activity.' }); }
 };
 
+exports.auditLog = async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1); const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+    const filter = {};
+    if (req.query.resourceType) filter.resourceType = String(req.query.resourceType).slice(0, 80);
+    if (req.query.action) filter.action = String(req.query.action).slice(0, 100);
+    if (req.query.startDate || req.query.endDate) {
+      if (!applyDateRange(filter, 'createdAt', req.query.startDate, req.query.endDate)) return res.status(400).json({ success: false, error: 'Enter valid date filters.' });
+    }
+    const [data, total] = await Promise.all([AuditEvent.find(filter).populate('actor', 'name email role').populate('customer', 'name companyName').sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).lean(), AuditEvent.countDocuments(filter)]);
+    res.json({ success: true, data, total, page, pageSize: limit });
+  } catch (error) { res.status(500).json({ success: false, error: 'Unable to load the activity log.' }); }
+};
+
 exports.calendar = async (req, res) => {
   try {
     const { page, limit } = pageArgs(req.query);
@@ -126,7 +142,7 @@ exports.health = async (req, res) => {
       if (s.status === 'Confirmed') indicators.pendingActivations++;
       if (s.scheduledPlanChange) indicators.scheduledPlanChanges++;
       counts[health]++;
-      list.push({ ...s, health, reasons, outstandingMinor, outstanding: fromMinor(outstandingMinor), invoiceCount: invoices.length, relatedInvoices: invoices.filter((i) => invoiceTotal(i) > invoicePaid(i)).map((i) => ({ invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, status: i.status, amount: fromMinor(invoiceTotal(i) - invoicePaid(i)) })) });
+      list.push({ ...s, health, reasons, outstandingMinor, outstanding: fromMinor(outstandingMinor), invoiceCount: invoices.length, relatedInvoices: invoices.filter((i) => invoiceTotal(i) > invoicePaid(i)).map((i) => ({ _id: i._id, invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, status: i.status, amount: fromMinor(invoiceTotal(i) - invoicePaid(i)) })) });
     }
     let filtered = list;
     if (req.query.health && req.query.health !== 'ALL') filtered = filtered.filter((item) => item.health === req.query.health);

@@ -3,6 +3,7 @@ const Discount = require('../models/Discount');
 const Product = require('../models/Product');
 const { toMinor, fromMinor } = require('../utils/money');
 const { assertDiscountAvailable, calculateDiscountMinor } = require('../services/discountService');
+const { recordAudit } = require('../services/auditService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
 
 exports.getDiscounts = async (req, res) => {
@@ -51,6 +52,7 @@ exports.createDiscount = async (req, res) => {
       startDate: starts, endDate: ends, usageLimit: numericLimit, appliesTo,
       targetProduct: target?._id || null, isActive: Boolean(isActive)
     });
+    recordAudit({ actor: req.user, action: 'discount_created', resourceType: 'Discount', resourceId: discount._id, newValue: { code: discount.code, discountType: discount.discountType, value: discount.value, isActive: discount.isActive } }).catch(() => {});
     res.status(201).json({ success: true, data: discount });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ success: false, error: 'Discount code already exists.' });
@@ -64,6 +66,7 @@ exports.setDiscountStatus = async (req, res) => {
     if (typeof req.body.isActive !== 'boolean') return res.status(400).json({ success: false, error: 'isActive must be true or false.' });
     const discount = await Discount.findByIdAndUpdate(req.params.id, { $set: { isActive: req.body.isActive } }, { new: true, runValidators: true });
     if (!discount) return res.status(404).json({ success: false, error: 'Discount not found.' });
+    recordAudit({ actor: req.user, action: req.body.isActive ? 'discount_activated' : 'discount_deactivated', resourceType: 'Discount', resourceId: discount._id, newValue: { isActive: discount.isActive } }).catch(() => {});
     res.json({ success: true, data: discount });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Unable to update discount status.' });

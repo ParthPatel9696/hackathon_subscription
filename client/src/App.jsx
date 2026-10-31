@@ -16,6 +16,14 @@ const Reports = lazy(() => import('./pages/Reports'));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
 const CustomerDetail = lazy(() => import('./pages/CustomerDetail'));
 const SubscriptionDetail = lazy(() => import('./pages/SubscriptionDetail'));
+const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail'));
+const PaymentDetail = lazy(() => import('./pages/PaymentDetail'));
+const CatalogDetail = lazy(() => import('./pages/CatalogDetail'));
+const SubscriptionRequestsPage = lazy(() => import('./pages/SubscriptionRequestsPage'));
+const StaffManagementPage = lazy(() => import('./pages/StaffManagementPage'));
+const WorkspaceSettingsPage = lazy(() => import('./pages/WorkspaceSettingsPage'));
+const ActivityLogPage = lazy(() => import('./pages/ActivityLogPage'));
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
 const BillingCalendarPage = lazy(() => import('./pages/OperationsPage').then((module) => ({ default: module.BillingCalendarPage })));
 const SubscriptionHealthPage = lazy(() => import('./pages/OperationsPage').then((module) => ({ default: module.SubscriptionHealthPage })));
 const RevenueIntelligencePage = lazy(() => import('./pages/OperationsPage').then((module) => ({ default: module.RevenueIntelligencePage })));
@@ -56,6 +64,11 @@ function RouteLoading() {
   return <div className="route-loading" role="status"><span className="loading-dot" /> Loading workspace…</div>;
 }
 
+function SettingsRouter() {
+  const role = useAuthStore((state) => state.user?.role);
+  return role === 'admin' ? <WorkspaceSettingsPage /> : <AccountPage />;
+}
+
 export default function App() {
   return <Suspense fallback={<RouteLoading />}><Routes>
     <Route path="/" element={<PublicHome />} />
@@ -79,19 +92,28 @@ export default function App() {
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="customers" element={<ProtectedRoute roles={['admin', 'staff']}><ResourcePage title="Customers" endpoint="/customers" resource="customers" /></ProtectedRoute>} />
       <Route path="customers/:id" element={<ProtectedRoute roles={['admin', 'staff']}><CustomerDetail /></ProtectedRoute>} />
-      <Route path="products" element={<ProtectedRoute roles={['admin']}><ResourcePage title="Products" resource="products" endpoint="/products" /></ProtectedRoute>} />
+      <Route path="products" element={<ProtectedRoute roles={['admin', 'staff']}><ResourcePage title="Products" resource="products" endpoint="/products" /></ProtectedRoute>} />
+      <Route path="products/:id" element={<ProtectedRoute roles={['admin', 'staff']}><CatalogDetail kind="product" /></ProtectedRoute>} />
       <Route path="plans" element={<ResourcePage title="Subscription Plans" resource="plans" endpoint="/plans" />} />
+      <Route path="plans/:id" element={<CatalogDetail kind="plan" />} />
       <Route path="quotations" element={<ProtectedRoute roles={['admin', 'staff']}><ResourcePage title="Quotations" resource="quotations" endpoint="/subscriptions?status=Quotation" /></ProtectedRoute>} />
       <Route path="subscriptions" element={<ResourcePage title="Subscriptions" resource="subscriptions" endpoint="/subscriptions" />} />
       <Route path="subscriptions/:id" element={<SubscriptionDetail />} />
+      <Route path="subscription-requests" element={<SubscriptionRequestsPage />} />
+      <Route path="activity" element={<ProtectedRoute roles={['admin', 'staff']}><ActivityLogPage /></ProtectedRoute>} />
+      <Route path="notifications" element={<NotificationsPage />} />
+      <Route path="quotations/:id" element={<ProtectedRoute roles={['admin', 'staff']}><SubscriptionDetail /></ProtectedRoute>} />
       <Route path="invoices" element={<ResourcePage title="Invoices" resource="invoices" endpoint="/invoices" />} />
+      <Route path="invoices/:id" element={<InvoiceDetail />} />
       <Route path="payments" element={<ResourcePage title="Payments" resource="payments" endpoint="/payments" />} />
+      <Route path="payments/:id" element={<PaymentDetail />} />
       <Route path="discounts" element={<ProtectedRoute roles={['admin']}><ResourcePage title="Discounts" resource="discounts" endpoint="/discounts" /></ProtectedRoute>} />
       <Route path="reports" element={<ProtectedRoute roles={['admin', 'staff']}><Reports /></ProtectedRoute>} />
       <Route path="billing-calendar" element={<ProtectedRoute roles={['admin', 'staff']}><BillingCalendarPage /></ProtectedRoute>} />
       <Route path="subscription-health" element={<ProtectedRoute roles={['admin', 'staff']}><SubscriptionHealthPage /></ProtectedRoute>} />
       <Route path="revenue-analytics" element={<ProtectedRoute roles={['admin', 'staff']}><RevenueIntelligencePage /></ProtectedRoute>} />
-      <Route path="settings" element={<AccountPage />} />
+      <Route path="settings" element={<SettingsRouter />} />
+      <Route path="staff" element={<ProtectedRoute roles={['admin']}><StaffManagementPage /></ProtectedRoute>} />
       <Route path="*" element={<StatusPage code="404" />} />
     </Route>
     <Route path="*" element={<StatusPage code="404" />} />

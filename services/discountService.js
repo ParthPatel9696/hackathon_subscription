@@ -14,7 +14,7 @@ function assertDiscountAvailable(discount, now = new Date()) {
 function calculateDiscountMinor(discount, eligibleSubtotalMinor) {
   if (!Number.isSafeInteger(eligibleSubtotalMinor) || eligibleSubtotalMinor < 0) throw new DiscountError('Discount base amount is invalid.');
   const minimumMinor = toMinor(discount.minPurchaseAmount || 0);
-  if (eligibleSubtotalMinor < minimumMinor) throw new DiscountError(`Minimum purchase of $${discount.minPurchaseAmount} required for this discount.`);
+  if (eligibleSubtotalMinor < minimumMinor) throw new DiscountError(`Minimum purchase of ₹${discount.minPurchaseAmount} required for this discount.`);
   const value = Number(discount.value);
   if (!Number.isFinite(value) || value <= 0 || (discount.discountType === 'percentage' && value > 100)) throw new DiscountError('Discount configuration is invalid.');
   if (discount.discountType === 'percentage') {

@@ -16,11 +16,12 @@ const currencyMinor = (minor) => formatCurrency(minor / 100);
 
 export function SubscriptionForm({ onClose, initialCustomer }) {
   const user = useAuthStore((state) => state.user);
+  const workspaceSettings = useQuery({ queryKey: ['workspace-settings'], queryFn: async () => (await api.get('/settings/workspace')).data.data });
   const { data: plans } = useQuery({ queryKey: ['plans'], queryFn: async () => (await api.get('/plans')).data });
   const { data: products } = useQuery({ queryKey: ['products'], queryFn: async () => (await api.get('/products')).data });
   const [customerSearch, setCustomerSearch] = useState('');
   const customerQuery = useQuery({ queryKey: ['customer-picker', customerSearch], queryFn: async () => (await api.get('/customers', { params: { search: customerSearch, limit: 20 } })).data, enabled: user?.role !== 'customer' });
-  const [form, setForm] = useState({ planId: '', customerId: user?.role === 'customer' ? user.id : initialCustomer?._id || '', paymentTerms: 'Net 30 Days', productId: '', quantity: 1, variantName: '', discountCode: '' });
+  const [form, setForm] = useState({ planId: '', customerId: user?.role === 'customer' ? user.id : initialCustomer?._id || '', paymentTerms: '', productId: '', quantity: 1, variantName: '', discountCode: '' });
   const mutation = useSubmit('/subscriptions', 'post', ['subscriptions', '/subscriptions', 'metrics']);
   const selectedPlan = plans?.data?.find((item) => item._id === form.planId);
   const selectedProduct = products?.data?.find((item) => item._id === form.productId);
@@ -38,30 +39,31 @@ export function SubscriptionForm({ onClose, initialCustomer }) {
       customerId: form.customerId || undefined,
       planId: form.planId,
       planName: selectedPlan?.name,
-      paymentTerms: form.paymentTerms,
+      paymentTerms: form.paymentTerms || undefined,
       discountCode: form.discountCode.trim() || undefined,
       lines: [{ productId: form.productId, quantity: Number(form.quantity), variantName: form.variantName || undefined }]
     }, { onSuccess: onClose });
   };
-  return <Modal title="Create quotation draft" onClose={onClose}><form onSubmit={submit} className="grid gap-4">
+  return <Modal title="Create quotation" onClose={onClose}><form onSubmit={submit} className="grid gap-4">
     {user?.role !== 'customer' && <><Field label="Find customer" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search name, company, or email"/><SelectField label="Customer" required value={form.customerId} onChange={(e) => setForm({ ...form, customerId: e.target.value })}><option value="">Select a customer</option>{initialCustomer && !customerQuery.data?.data?.some((item) => item._id === initialCustomer._id) && <option value={initialCustomer._id}>{initialCustomer.companyName || initialCustomer.name} · {initialCustomer.email}</option>}{customerQuery.data?.data?.map((customer) => <option key={customer._id} value={customer._id}>{customer.companyName || customer.name} · {customer.email}</option>)}</SelectField></>}
     <SelectField label="Plan" required value={form.planId} onChange={(e) => { const plan = plans?.data?.find((item) => item._id === e.target.value); setForm({ ...form, planId: e.target.value, productId: plan?.product?._id || '', variantName: '' }); }}><option value="">Select a plan</option>{plans?.data?.map((plan) => <option key={plan._id} value={plan._id}>{plan.name} · {plan.billingFrequency}</option>)}</SelectField>
     <SelectField label="Product" required value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value, variantName: '' })}><option value="">Select a product</option>{products?.data?.filter((product) => !selectedPlan?.product?._id || product._id === selectedPlan.product._id).map((product) => <option key={product._id} value={product._id}>{product.name}</option>)}</SelectField>
     {variants.length > 0 && <SelectField label="Variant" value={form.variantName} onChange={(e) => setForm({ ...form, variantName: e.target.value })}><option value="">No variant</option>{variants.map((variant) => <option key={variant._id} value={variant.name}>{variant.name} (+{formatCurrency(variant.priceExtra)})</option>)}</SelectField>}
     <Field label="Quantity" type="number" min="1" required value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-    <SelectField label="Payment terms" value={form.paymentTerms} onChange={(e) => setForm({ ...form, paymentTerms: e.target.value })}><option>Net 30 Days</option><option>Due on Receipt</option><option>Net 60 Days</option></SelectField>
+    <SelectField label="Payment terms" value={form.paymentTerms || workspaceSettings.data?.defaultPaymentTerms || 'Net 30 Days'} onChange={(e) => setForm({ ...form, paymentTerms: e.target.value })}>{workspaceSettings.data?.defaultPaymentTerms && !['Net 30 Days', 'Due on Receipt', 'Net 60 Days'].includes(workspaceSettings.data.defaultPaymentTerms) && <option>{workspaceSettings.data.defaultPaymentTerms}</option>}<option>Net 30 Days</option><option>Due on Receipt</option><option>Net 60 Days</option></SelectField>
     <Field label="Discount code" value={form.discountCode} onChange={(e) => setForm({ ...form, discountCode: e.target.value.toUpperCase() })} placeholder="Optional" />
     {selectedProduct && <div className="billing-preview"><div><span>Estimated subtotal</span><strong>{currencyMinor(subtotalMinor)}</strong></div><div><span>Tax ({(Number(selectedProduct.taxRate || 0) * 100).toFixed(1)}%)</span><strong>{currencyMinor(taxMinor)}</strong></div><div className="preview-total"><span>Estimated recurring total</span><strong>{currencyMinor(subtotalMinor + taxMinor)} / {selectedPlan?.billingFrequency || 'period'}</strong></div><p>Final amounts are calculated and validated by Brightloop when you save.</p></div>}
     <FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to create quotation.')} />
-    <button className="button" disabled={mutation.isPending || (user?.role !== 'customer' && customerQuery.isLoading)}>{mutation.isPending ? 'Saving…' : 'Save quotation draft'}</button>
+    <button className="button" disabled={mutation.isPending || (user?.role !== 'customer' && customerQuery.isLoading)}>{mutation.isPending ? 'Saving…' : 'Create quotation'}</button>
   </form></Modal>;
 }
 
 export function CustomerForm({ customer, onClose }) {
   const editing = Boolean(customer?._id);
+  const staff = useQuery({ queryKey: ['staff'], queryFn: async () => (await api.get('/staff')).data.data });
   const [form, setForm] = useState({
     name: customer?.name || '', email: customer?.email || '', companyName: customer?.companyName || '',
-    phone: customer?.phone || '', billingAddress: customer?.billingAddress || '', accountStatus: customer?.accountStatus || 'Active', password: ''
+    alternateEmail: customer?.alternateEmail || '', customerType: customer?.customerType || 'business', phone: customer?.phone || '', alternatePhone: customer?.alternatePhone || '', website: customer?.website || '', taxId: customer?.taxId || '', billingContactName: customer?.billingContactName || '', billingContactEmail: customer?.billingContactEmail || '', billingContactPhone: customer?.billingContactPhone || '', billingAddress: customer?.billingAddress || '', billingAddressLine2: customer?.billingAddressLine2 || '', billingCity: customer?.billingCity || '', billingState: customer?.billingState || '', billingPostalCode: customer?.billingPostalCode || '', billingCountry: customer?.billingCountry || 'India', shippingAddress: customer?.shippingAddress || '', preferredPaymentMethod: customer?.preferredPaymentMethod || '', paymentTerms: customer?.paymentTerms || 'Net 30 Days', assignedStaff: customer?.assignedStaff?._id || customer?.assignedStaff || '', accountStatus: customer?.accountStatus || 'Active', password: ''
   });
   const mutation = useSubmit(editing ? `/customers/${customer._id}` : '/customers', editing ? 'patch' : 'post', ['customers', 'customer', 'global-search']);
   const submit = (event) => {
@@ -74,8 +76,25 @@ export function CustomerForm({ customer, onClose }) {
     <Field label="Full name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
     <Field label="Email address" type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
     <Field label="Company" value={form.companyName} onChange={(event) => setForm({ ...form, companyName: event.target.value })} />
+    <SelectField label="Customer type" value={form.customerType} onChange={(event) => setForm({ ...form, customerType: event.target.value })}><option value="business">Business</option><option value="individual">Individual</option></SelectField>
     <Field label="Phone" type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
-    <Field label="Billing address" className="sm:col-span-2"><textarea className="field min-h-20" value={form.billingAddress} onChange={(event) => setForm({ ...form, billingAddress: event.target.value })} /></Field>
+    <Field label="Alternate phone" type="tel" value={form.alternatePhone} onChange={(event) => setForm({ ...form, alternatePhone: event.target.value })} />
+    <Field label="Alternate email" type="email" value={form.alternateEmail} onChange={(event) => setForm({ ...form, alternateEmail: event.target.value })} />
+    <Field label="Website" type="url" value={form.website} onChange={(event) => setForm({ ...form, website: event.target.value })} />
+    <Field label="GSTIN / tax ID" value={form.taxId} onChange={(event) => setForm({ ...form, taxId: event.target.value })} />
+    <Field label="Billing contact name" value={form.billingContactName} onChange={(event) => setForm({ ...form, billingContactName: event.target.value })} />
+    <Field label="Billing contact email" type="email" value={form.billingContactEmail} onChange={(event) => setForm({ ...form, billingContactEmail: event.target.value })} />
+    <Field label="Billing contact phone" type="tel" value={form.billingContactPhone} onChange={(event) => setForm({ ...form, billingContactPhone: event.target.value })} />
+    <Field label="Billing address line 1" className="sm:col-span-2"><textarea className="field min-h-16" value={form.billingAddress} onChange={(event) => setForm({ ...form, billingAddress: event.target.value })} /></Field>
+    <Field label="Billing address line 2" value={form.billingAddressLine2} onChange={(event) => setForm({ ...form, billingAddressLine2: event.target.value })} />
+    <Field label="City" value={form.billingCity} onChange={(event) => setForm({ ...form, billingCity: event.target.value })} />
+    <Field label="State" value={form.billingState} onChange={(event) => setForm({ ...form, billingState: event.target.value })} />
+    <Field label="PIN code" value={form.billingPostalCode} onChange={(event) => setForm({ ...form, billingPostalCode: event.target.value })} />
+    <Field label="Country" value={form.billingCountry} onChange={(event) => setForm({ ...form, billingCountry: event.target.value })} />
+    <Field label="Shipping address" className="sm:col-span-2"><textarea className="field min-h-16" value={form.shippingAddress} onChange={(event) => setForm({ ...form, shippingAddress: event.target.value })} /></Field>
+    <SelectField label="Preferred payment method" value={form.preferredPaymentMethod} onChange={(event) => setForm({ ...form, preferredPaymentMethod: event.target.value })}><option value="">Not specified</option>{['UPI','Bank transfer','Card','Cheque','Cash','Other'].map((method) => <option key={method}>{method}</option>)}</SelectField>
+    <SelectField label="Payment terms" value={form.paymentTerms} onChange={(event) => setForm({ ...form, paymentTerms: event.target.value })}>{['Due on Receipt','Net 15 Days','Net 30 Days','Net 45 Days','Net 60 Days'].map((term) => <option key={term}>{term}</option>)}</SelectField>
+    {staff.data && <SelectField label="Assigned staff" value={form.assignedStaff} onChange={(event) => setForm({ ...form, assignedStaff: event.target.value || null })}><option value="">Unassigned</option>{staff.data.filter((person) => person.accountStatus !== 'Archived').map((person) => <option key={person._id} value={person._id}>{person.name} · {person.email}</option>)}</SelectField>}
     {editing && <label className="grid gap-1.5 text-sm font-medium text-slate-700">Account status<select className="field" value={form.accountStatus} onChange={(event) => setForm({ ...form, accountStatus: event.target.value })}><option>Active</option><option>Archived</option></select></label>}
     {!editing && <><Field label="Initial password" type="password" minLength="9" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /><p className="field-hint self-end">At least 9 characters with uppercase, lowercase, and a symbol. The customer can change it through password recovery.</p></>}
     <div className="sm:col-span-2"><FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save this customer.')} /><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save customer' : 'Create customer'}</button></div>
@@ -86,7 +105,7 @@ export function TransitionForm({ subscription, onClose }) {
   const [targetStatus, setTargetStatus] = useState('');
   const [reason, setReason] = useState('');
   const mutation = useSubmit('/subscriptions/transition', 'post', ['subscriptions', '/subscriptions', 'notifications', 'metrics']);
-  const nextStatuses = { Draft: ['Quotation', 'Cancelled'], Quotation: ['Confirmed', 'Draft', 'Cancelled'], Confirmed: ['Active', 'Cancelled'], Active: ['Paused', 'Closed'], Paused: ['Active', 'Closed'], Closed: ['Draft'] }[subscription.status] || [];
+  const nextStatuses = { Draft: ['Quotation', 'Cancelled'], Quotation: ['Confirmed', 'Draft', 'Cancelled', 'Expired'], Confirmed: ['Active', 'Cancelled'], Active: ['Paused', 'Closed'], Paused: ['Active', 'Closed'], Closed: ['Draft'] }[subscription.status] || [];
   const submit = (event) => {
     event.preventDefault();
     mutation.mutate({ id: subscription._id, targetStatus, reason }, { onSuccess: onClose });
@@ -133,7 +152,7 @@ export function PaymentForm({ onClose }) {
   return <Modal title="Record payment" onClose={onClose}><form onSubmit={submit} className="grid gap-4">
     <SelectField label="Invoice" required value={form.invoiceId} onChange={(e) => setForm({ ...form, invoiceId: e.target.value })}><option value="">Select an invoice</option>{invoices?.data?.filter((item) => item.status !== 'Paid' && item.status !== 'Cancelled').map((item) => <option key={item._id} value={item._id}>{item.invoiceNumber} — {formatCurrency(item.grandTotal - (item.paidAmount || 0))} outstanding</option>)}</SelectField>
     <Field label="Amount" type="number" min="0.01" step="0.01" max={outstanding || undefined} required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
-    <SelectField label="Payment method" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}><option>Bank Transfer</option><option>Credit Card</option><option>UPI / Online</option><option>Check</option></SelectField>
+    <SelectField label="Payment method" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}><option>UPI</option><option>Bank transfer</option><option>Card</option><option>Cheque</option><option>Cash</option><option>Other</option></SelectField>
     <Field label="Payment date" type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} />
     <Field label="Transaction reference / notes" value={form.referenceNote} onChange={(e) => setForm({ ...form, referenceNote: e.target.value })} />
     <FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to record payment.')} />
@@ -162,9 +181,10 @@ export function DiscountForm({ onClose }) {
 }
 
 export function ProductForm({ product, onClose }) {
+  const workspaceSettings = useQuery({ queryKey: ['workspace-settings'], queryFn: async () => (await api.get('/settings/workspace')).data.data });
   const initial = {
-    name: product?.name || '', type: product?.type || 'software', salesPrice: product?.salesPrice ?? '',
-    costPrice: product?.costPrice ?? '', taxRate: product?.taxRate ?? 0, taxLabel: product?.taxLabel || '', notes: product?.notes || '',
+    sku: product?.sku || '', name: product?.name || '', shortDescription: product?.shortDescription || '', description: product?.description || '', category: product?.category || '', imageUrl: product?.imageUrl || '', type: product?.type || 'software', salesPrice: product?.salesPrice ?? '',
+    costPrice: product?.costPrice ?? '', taxRate: product?.taxRate ?? '', taxLabel: product?.taxLabel || '', notes: product?.notes || '', isActive: product?.isActive ?? true, billingEligible: product?.billingEligible ?? true,
     taxComponents: JSON.stringify(product?.taxComponents || [], null, 2), variants: JSON.stringify(product?.variants || [], null, 2)
   };
   const [form, setForm] = useState(initial);
@@ -176,17 +196,23 @@ export function ProductForm({ product, onClose }) {
     let variants; let taxComponents;
     try { variants = JSON.parse(form.variants || '[]'); if (!Array.isArray(variants)) throw new Error('Variants must be a JSON array.'); taxComponents = JSON.parse(form.taxComponents || '[]'); if (!Array.isArray(taxComponents)) throw new Error('Tax components must be a JSON array.'); }
     catch (error) { setVariantError(error.message || 'Enter valid JSON.'); return; }
-    const taxRate = taxComponents.length ? taxComponents.reduce((sum, component) => sum + Number(component.rate || 0), 0) : Number(form.taxRate);
+    const taxRate = taxComponents.length ? taxComponents.reduce((sum, component) => sum + Number(component.rate || 0), 0) : form.taxRate === '' ? undefined : Number(form.taxRate);
     mutation.mutate({ ...form, salesPrice: Number(form.salesPrice), costPrice: Number(form.costPrice || 0), taxRate, taxComponents, variants }, { onSuccess: onClose });
   };
   return <Modal title={editing ? 'Edit product' : 'Add product'} onClose={onClose}><form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
     <Field label="Product name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}/>
+    <Field label="SKU" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value.toUpperCase() })}/>
+    <Field label="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}/>
+    <Field label="Short description" value={form.shortDescription} onChange={(e) => setForm({ ...form, shortDescription: e.target.value })}/>
+    <Field label="Image URL" type="url" value={form.imageUrl} onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}/>
     <SelectField label="Type" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option value="software">Software</option><option value="service">Service</option><option value="addon">Add-on</option><option value="seat">Seat</option></SelectField>
     <Field label="Sales price (INR)" type="number" min="0" step="0.01" required value={form.salesPrice} onChange={(e) => setForm({ ...form, salesPrice: e.target.value })}/>
-    <Field label="Tax rate (decimal, 0–1)" type="number" min="0" max="1" step="0.001" value={form.taxRate} onChange={(e) => setForm({ ...form, taxRate: e.target.value })}/>
+    <Field label="Tax rate (decimal, 0–1)" type="number" min="0" max="1" step="0.001" value={form.taxRate === '' ? workspaceSettings.data?.defaultTaxRate ?? 0 : form.taxRate} onChange={(e) => setForm({ ...form, taxRate: e.target.value })}/>
     <Field label="Tax label" value={form.taxLabel} onChange={(e) => setForm({ ...form, taxLabel: e.target.value })} placeholder="Configurable business label"/>
     <Field label="Cost price (INR, admin only)" type="number" min="0" step="0.01" value={form.costPrice} onChange={(e) => setForm({ ...form, costPrice: e.target.value })}/>
     <Field label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}/>
+    <Field label="Full description" className="sm:col-span-2"><textarea className="field min-h-20" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}/></Field>
+    <div className="flex gap-4 sm:col-span-2">{[['isActive','Active'],['billingEligible','Eligible for billing']].map(([key,label])=><label className="flex items-center gap-2 text-sm" key={key}><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })}/>{label}</label>)}</div>
     <Field label="Variants (JSON array)" className="sm:col-span-2"><textarea className="field min-h-24 font-mono text-xs" value={form.variants} onChange={(e) => setForm({ ...form, variants: e.target.value })} placeholder="[]" /></Field>
     <Field label="Tax components (JSON array; decimal rates)" className="sm:col-span-2"><textarea className="field min-h-20 font-mono text-xs" value={form.taxComponents} onChange={(e) => setForm({ ...form, taxComponents: e.target.value })} placeholder='[{"label":"Component A","rate":0.05}]' /></Field>
     <div className="sm:col-span-2"><p className="field-hint">Each variant group uses a name and options with name, priceExtra, and optional SKU.</p>{variantError && <p className="error mt-2">{variantError}</p>}<FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save product.')}/><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save product' : 'Create product'}</button></div>
@@ -198,16 +224,20 @@ export function PlanForm({ plan, onClose }) {
   const initial = {
     name: plan?.name || '', code: plan?.code || '', product: plan?.product?._id || plan?.product || '',
     billingFrequency: plan?.billingFrequency || 'monthly', basePrice: plan?.basePrice ?? '', minQuantity: plan?.minQuantity ?? 1,
+    maxQuantity: plan?.maxQuantity ?? '', trialDays: plan?.trialDays ?? 0, setupFee: plan?.setupFee ?? 0, includedUnits: plan?.includedUnits ?? 0, includedSeats: plan?.includedSeats ?? 0, overagePrice: plan?.overagePrice ?? 0, features: JSON.stringify(plan?.features || [], null, 2), isVisible: plan?.isVisible ?? true, isActive: plan?.isActive ?? true,
     description: plan?.description || '', availableFrom: plan?.availableFrom ? new Date(plan.availableFrom).toISOString().slice(0,10) : '',
     availableTo: plan?.availableTo ? new Date(plan.availableTo).toISOString().slice(0,10) : '',
     allowPause: plan?.allowPause ?? true, allowEarlyClose: plan?.allowEarlyClose ?? true, allowRenew: plan?.allowRenew ?? true
   };
   const [form, setForm] = useState(initial);
+  const [planError, setPlanError] = useState('');
   const editing = Boolean(plan?._id);
   const mutation = useSubmit(editing ? `/plans/${plan._id}` : '/plans', editing ? 'patch' : 'post', ['/plans']);
   const submit = (event) => {
     event.preventDefault();
-    const payload = { ...form, basePrice: Number(form.basePrice), minQuantity: Number(form.minQuantity), product: form.product || null, availableFrom: form.availableFrom || undefined, availableTo: form.availableTo || undefined };
+    let features;
+    try { features = JSON.parse(form.features || '[]'); if (!Array.isArray(features) || features.some((item) => typeof item !== 'string')) throw new Error(); } catch { setPlanError('Features must be a JSON array of text values.'); return; }
+    const payload = { ...form, features, maxQuantity: form.maxQuantity === '' ? null : Number(form.maxQuantity), basePrice: Number(form.basePrice), setupFee: Number(form.setupFee), overagePrice: Number(form.overagePrice), minQuantity: Number(form.minQuantity), trialDays: Number(form.trialDays), includedUnits: Number(form.includedUnits), includedSeats: Number(form.includedSeats), product: form.product || null, availableFrom: form.availableFrom || undefined, availableTo: form.availableTo || undefined };
     mutation.mutate(payload, { onSuccess: onClose });
   };
   return <Modal title={editing ? 'Edit plan' : 'Create plan'} onClose={onClose}><form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
@@ -217,11 +247,18 @@ export function PlanForm({ plan, onClose }) {
     <SelectField label="Billing interval" value={form.billingFrequency} onChange={(e) => setForm({ ...form, billingFrequency: e.target.value })}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></SelectField>
     <Field label="Price per billing interval (INR)" type="number" min="0" step="0.01" required value={form.basePrice} onChange={(e) => setForm({ ...form, basePrice: e.target.value })}/>
     <Field label="Minimum quantity" type="number" min="1" step="1" value={form.minQuantity} onChange={(e) => setForm({ ...form, minQuantity: e.target.value })}/>
+    <Field label="Maximum quantity (optional)" type="number" min="1" step="1" value={form.maxQuantity} onChange={(e) => setForm({ ...form, maxQuantity: e.target.value })}/>
+    <Field label="Trial days" type="number" min="0" max="365" value={form.trialDays} onChange={(e) => setForm({ ...form, trialDays: e.target.value })}/>
+    <Field label="Setup fee (INR)" type="number" min="0" step="0.01" value={form.setupFee} onChange={(e) => setForm({ ...form, setupFee: e.target.value })}/>
+    <Field label="Included units" type="number" min="0" value={form.includedUnits} onChange={(e) => setForm({ ...form, includedUnits: e.target.value })}/>
+    <Field label="Included seats" type="number" min="0" value={form.includedSeats} onChange={(e) => setForm({ ...form, includedSeats: e.target.value })}/>
+    <Field label="Overage price (INR)" type="number" min="0" step="0.01" value={form.overagePrice} onChange={(e) => setForm({ ...form, overagePrice: e.target.value })}/>
+    <Field label="Features (JSON text array)" className="sm:col-span-2"><textarea className="field min-h-20 font-mono text-xs" value={form.features} onChange={(e) => setForm({ ...form, features: e.target.value })}/></Field>
     <Field label="Available from" type="date" value={form.availableFrom} onChange={(e) => setForm({ ...form, availableFrom: e.target.value })}/>
     <Field label="Available until" type="date" value={form.availableTo} onChange={(e) => setForm({ ...form, availableTo: e.target.value })}/>
     <Field label="Description" className="sm:col-span-2"><textarea className="field min-h-20" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}/></Field>
-    <div className="flex flex-wrap gap-4 sm:col-span-2">{[['allowPause','Allow pause'],['allowEarlyClose','Allow early close'],['allowRenew','Allow renewal']].map(([key,label])=><label key={key} className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })}/>{label}</label>)}</div>
-    <div className="sm:col-span-2"><FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save plan.')}/><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save plan' : 'Create plan'}</button></div>
+    <div className="flex flex-wrap gap-4 sm:col-span-2">{[['allowPause','Allow pause'],['allowEarlyClose','Allow early close'],['allowRenew','Allow renewal'],['isVisible','Visible to customers'],['isActive','Active']].map(([key,label])=><label key={key} className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })}/>{label}</label>)}</div>
+    <div className="sm:col-span-2">{planError && <p className="error">{planError}</p>}<FormError message={mutation.error?.response?.data?.error || (mutation.isError && 'Unable to save plan.')}/><button className="button mt-3 w-full" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save plan' : 'Create plan'}</button></div>
   </form></Modal>;
 }
 

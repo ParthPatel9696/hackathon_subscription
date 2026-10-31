@@ -38,6 +38,8 @@ const invoiceSchema = new mongoose.Schema({
   },
   customerName: { type: String, required: true },
   customerEmail: { type: String, required: true },
+  companySnapshot: { type: mongoose.Schema.Types.Mixed, default: {} },
+  billingAddressSnapshot: { type: mongoose.Schema.Types.Mixed, default: {} },
   invoiceDate: { type: Date, default: Date.now },
   dueDate: { type: Date, required: true },
   billingPeriodStart: { type: Date },

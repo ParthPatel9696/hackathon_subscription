@@ -5,8 +5,9 @@ const crypto = require('crypto');
 const { toMinor, fromMinor } = require('../utils/money');
 const { isTransactionUnsupported } = require('../services/billingService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
+const { recordAudit } = require('../services/auditService');
 
-const METHODS = ['Bank Transfer', 'Credit Card', 'UPI / Online', 'Check'];
+const METHODS = ['Bank Transfer', 'Credit Card', 'UPI / Online', 'Check', 'UPI', 'Bank transfer', 'Card', 'Cheque', 'Cash', 'Other'];
 
 class PaymentError extends Error {
   constructor(message, statusCode = 400) { super(message); this.statusCode = statusCode; }
@@ -194,6 +195,7 @@ exports.recordPayment = async (req, res) => {
       if (!isTransactionUnsupported(error)) throw error;
       result = await recordWithStandaloneRecovery(input, req.user._id);
     }
+    recordAudit({ actor: req.user, action: 'payment_recorded', resourceType: 'Payment', resourceId: result.payment._id, customer: result.invoice.customer, newValue: { amountMinor: input.amountMinor, method: result.payment.method, status: result.payment.status }, metadata: { invoiceNumber: result.invoice.invoiceNumber, reference: result.payment.referenceNote } }).catch(() => {});
     res.status(201).json({
       success: true,
       message: `Payment of ₹${fromMinor(input.amountMinor)} recorded for invoice ${result.invoice.invoiceNumber}. Status: ${result.invoice.status}`,
@@ -214,6 +216,12 @@ exports.getPayments = async (req, res) => {
       const customerInvoices = await Invoice.find({ customer: req.user._id }).select('_id');
       query.invoice = { $in: customerInvoices.map((invoice) => invoice._id) };
     }
+    if (req.query.subscriptionId) {
+      if (!mongoose.isValidObjectId(req.query.subscriptionId)) return res.status(400).json({ success: false, error: 'Invalid subscription id.' });
+      const relatedInvoices = await Invoice.find({ subscription: req.query.subscriptionId }).select('_id');
+      const allowedIds = relatedInvoices.map((invoice) => String(invoice._id));
+      query.invoice = query.invoice?.$in ? { $in: allowedIds.filter((id) => query.invoice.$in.some((ownedId) => String(ownedId) === id)) } : { $in: allowedIds };
+    }
     if (req.query.status === 'posted') query.status = 'posted';
     const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
     if (search) { const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); query.$and = [{ $or: query.$or }, { $or: ['invoiceNumber', 'method', 'referenceNote'].map((field) => ({ [field]: { $regex: escaped, $options: 'i' } })) }]; delete query.$or; }
@@ -225,5 +233,16 @@ exports.getPayments = async (req, res) => {
     res.json({ success: true, count: payments.length, total, page, pageSize, data: payments });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Unable to load payments.' });
+  }
+};
+
+exports.getPaymentById = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid payment id.' });
+    const payment = await Payment.findOne({ _id: req.params.id, $or: [{ status: 'posted' }, { status: { $exists: false } }] }).populate('invoice').lean();
+    if (!payment || (req.user.role === 'customer' && String(payment.invoice?.customer) !== String(req.user._id))) return res.status(404).json({ success: false, error: 'Payment not found.' });
+    res.json({ success: true, data: payment });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Unable to load payment details.' });
   }
 };

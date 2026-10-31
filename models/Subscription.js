@@ -120,7 +120,7 @@ const subscriptionSchema = new mongoose.Schema({
   recurringTotal: { type: Number, required: true },
   status: {
     type: String,
-    enum: ['Draft', 'Quotation', 'Confirmed', 'Active', 'Paused', 'Closed'],
+    enum: ['Draft', 'Quotation', 'Confirmed', 'Active', 'Paused', 'Closed', 'Cancelled', 'Expired'],
     default: 'Draft'
   },
   quotationValidUntil: { type: Date },

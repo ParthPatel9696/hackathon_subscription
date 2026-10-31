@@ -13,7 +13,15 @@ export function formatCurrency(amount) {
 export function formatDate(value) {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat(BUSINESS_LOCALE, {
+  if (Number.isNaN(date.getTime())) return '—';
+  const format = localStorage.getItem('brightloop_date_format') || 'DD MMM YYYY';
+  if (format === 'YYYY-MM-DD' || format === 'DD/MM/YYYY') {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat(BUSINESS_LOCALE, {
+      day: '2-digit', month: '2-digit', year: 'numeric', timeZone: BUSINESS_TIME_ZONE
+    }).formatToParts(date).map((part) => [part.type, part.value]));
+    return format === 'YYYY-MM-DD' ? `${parts.year}-${parts.month}-${parts.day}` : `${parts.day}/${parts.month}/${parts.year}`;
+  }
+  return new Intl.DateTimeFormat(BUSINESS_LOCALE, {
     day: '2-digit', month: 'short', year: 'numeric', timeZone: BUSINESS_TIME_ZONE
   }).format(date);
 }

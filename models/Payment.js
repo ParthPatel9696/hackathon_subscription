@@ -12,7 +12,7 @@ const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true, min: 0.01 },
   method: {
     type: String,
-    enum: ['Bank Transfer', 'Credit Card', 'UPI / Online', 'Check'],
+    enum: ['Bank Transfer', 'Credit Card', 'UPI / Online', 'Check', 'UPI', 'Bank transfer', 'Card', 'Cheque', 'Cash', 'Other'],
     required: true
   },
   paymentDate: { type: Date, default: Date.now },

@@ -13,6 +13,8 @@ const searchCtrl = require('../controllers/searchController');
 const notificationCtrl = require('../controllers/notificationController');
 const operationsCtrl = require('../controllers/operationsController');
 const catalogCtrl = require('../controllers/catalogController');
+const subscriptionRequestCtrl = require('../controllers/subscriptionRequestController');
+const settingsCtrl = require('../controllers/settingsController');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { createRateLimiter } = require('../middleware/rateLimit');
 const { validateBody, validateObjectIdParam } = require('../middleware/validate');
@@ -22,6 +24,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const loginLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
 const registerLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 5 });
 const passwordResetLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 5 });
+const passwordChangeLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 5 });
 
 // Seeding is destructive, so it is available only as an authenticated POST.
 router.post('/seed', verifyToken, requireRole('admin'), seedCtrl.seedDatabase);
@@ -33,11 +36,14 @@ router.post('/auth/register', registerLimit, authCtrl.register);
 router.post('/auth/login', loginLimit, authCtrl.login);
 router.post('/auth/logout', verifyToken, authCtrl.logout);
 router.get('/auth/me', verifyToken, authCtrl.getMe);
+router.post('/auth/change-password', verifyToken, passwordChangeLimit, authCtrl.changePassword);
 router.post('/auth/forgot-password', passwordResetLimit, authCtrl.forgotPassword);
 router.post('/auth/reset-password', passwordResetLimit, authCtrl.resetPassword);
 
 // Only the admin can add a new member of staff (Page 2 Spec)
 router.post('/auth/add-staff', verifyToken, requireRole('admin'), authCtrl.addStaff);
+router.get('/staff', verifyToken, requireRole('admin'), authCtrl.listStaff);
+router.patch('/staff/:id/status', verifyToken, requireRole('admin'), authCtrl.setStaffStatus);
 
 // Customer directory and account summaries are restricted to internal users.
 router.get('/customers/me', verifyToken, requireRole('customer'), customerCtrl.getMyCustomer);
@@ -57,16 +63,23 @@ router.delete('/customers/:id/notes/:noteId', verifyToken, requireRole('admin', 
 router.patch('/customers/:id/tags', verifyToken, requireRole('admin'), validateObjectIdParam('id'), validateBody(tagsBody), asyncHandler(operationsCtrl.updateTags));
 router.get('/search', verifyToken, searchCtrl.search);
 router.get('/notifications', verifyToken, notificationCtrl.listNotifications);
+router.get('/activity-log', verifyToken, requireRole('admin', 'staff'), operationsCtrl.auditLog);
+router.get('/settings/workspace', verifyToken, settingsCtrl.getWorkspace);
+router.patch('/settings/workspace', verifyToken, requireRole('admin'), settingsCtrl.updateWorkspace);
 
 // ==========================================
 // Public / Semi-Public Catalogs
 // ==========================================
 router.get('/products', verifyToken, catalogCtrl.listProducts);
+router.get('/products/:id', verifyToken, requireRole('admin', 'staff'), catalogCtrl.getProductById);
 router.post('/products', verifyToken, requireRole('admin'), catalogCtrl.createProduct);
 router.patch('/products/:id', verifyToken, requireRole('admin'), catalogCtrl.updateProduct);
+router.patch('/products/:id/status', verifyToken, requireRole('admin'), catalogCtrl.setProductStatus);
 router.get('/plans', verifyToken, catalogCtrl.listPlans);
+router.get('/plans/:id', verifyToken, catalogCtrl.getPlanById);
 router.post('/plans', verifyToken, requireRole('admin'), catalogCtrl.createPlan);
 router.patch('/plans/:id', verifyToken, requireRole('admin'), catalogCtrl.updatePlan);
+router.patch('/plans/:id/status', verifyToken, requireRole('admin'), catalogCtrl.setPlanStatus);
 
 // ==========================================
 // Dashboard Finance Metrics (< 2s)
@@ -75,15 +88,18 @@ router.get('/dashboard/metrics', verifyToken, requireRole('admin', 'staff'), das
 router.get('/billing/calendar', verifyToken, requireRole('admin', 'staff'), operationsCtrl.calendar);
 router.get('/subscriptions/health', verifyToken, requireRole('admin', 'staff'), operationsCtrl.health);
 router.get('/analytics/revenue/summary', verifyToken, requireRole('admin', 'staff'), operationsCtrl.revenue);
+router.get('/subscription-requests', verifyToken, subscriptionRequestCtrl.list);
+router.post('/subscriptions/:id/requests', verifyToken, requireRole('customer'), subscriptionRequestCtrl.create);
+router.patch('/subscription-requests/:id/review', verifyToken, requireRole('admin', 'staff'), subscriptionRequestCtrl.review);
 
 // ==========================================
 // Subscriptions & Lifecycle State Machine
 // ==========================================
 router.get('/subscriptions', verifyToken, subscriptionCtrl.getSubscriptions);
 router.get('/subscriptions/:id', verifyToken, subscriptionCtrl.getSubscriptionById);
-router.post('/subscriptions', verifyToken, requireRole('admin', 'staff', 'customer'), subscriptionCtrl.createSubscription);
-router.post('/subscriptions/:id/plan-change/preview', verifyToken, requireRole('admin', 'staff', 'customer'), validateObjectIdParam('id'), validateBody(planChangeBody), subscriptionCtrl.previewPlanChange);
-router.post('/subscriptions/:id/plan-change', verifyToken, requireRole('admin', 'staff', 'customer'), validateObjectIdParam('id'), validateBody(planChangeBody), subscriptionCtrl.changePlan);
+router.post('/subscriptions', verifyToken, requireRole('admin', 'staff'), subscriptionCtrl.createSubscription);
+router.post('/subscriptions/:id/plan-change/preview', verifyToken, requireRole('admin', 'staff'), validateObjectIdParam('id'), validateBody(planChangeBody), subscriptionCtrl.previewPlanChange);
+router.post('/subscriptions/:id/plan-change', verifyToken, requireRole('admin', 'staff'), validateObjectIdParam('id'), validateBody(planChangeBody), subscriptionCtrl.changePlan);
 router.post('/subscriptions/transition', verifyToken, requireRole('admin', 'staff'), subscriptionCtrl.transitionState);
 
 // ==========================================
@@ -91,12 +107,14 @@ router.post('/subscriptions/transition', verifyToken, requireRole('admin', 'staf
 // ==========================================
 router.post('/billing/run-batch', verifyToken, requireRole('admin', 'staff'), billingCtrl.runRecurringBillingBatch);
 router.get('/invoices', verifyToken, billingCtrl.getInvoices);
+router.get('/invoices/:id', verifyToken, billingCtrl.getInvoiceById);
 router.patch('/invoices/:id/status', verifyToken, requireRole('admin', 'staff'), billingCtrl.updateInvoiceStatus);
 
 // ==========================================
 // Payments
 // ==========================================
 router.get('/payments', verifyToken, paymentCtrl.getPayments);
+router.get('/payments/:id', verifyToken, paymentCtrl.getPaymentById);
 router.post('/payments', verifyToken, requireRole('admin', 'staff'), paymentCtrl.recordPayment);
 
 // ==========================================

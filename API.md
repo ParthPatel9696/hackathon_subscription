@@ -4,7 +4,7 @@ All routes are mounted under `/api`. Requests use the existing HttpOnly session 
 
 ## Authentication and roles
 
-- `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
+- `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/change-password`
 - `POST /auth/forgot-password`, `POST /auth/reset-password`, `POST /auth/add-staff`
 - Admin: customer administration, catalog writes, discounts, seed endpoint.
 - Admin and staff: internal customer workspace, notes, tags (admin only), billing operations, health and revenue analytics.
@@ -24,13 +24,13 @@ The server enforces these permissions. Internal notes, revenue analytics and hea
 
 ## Catalog, subscriptions and billing
 
-- `GET /products`, `POST /products`, `PATCH /products/:id` — product catalog; products support configurable tax labels/components and INR currency.
-- `GET /plans`, `POST /plans`, `PATCH /plans/:id` — plans.
-- `GET /subscriptions`, `POST /subscriptions`, `GET /subscriptions/:id` — subscriptions/quotations (customer records are ownership scoped).
+- `GET /products` — active, billing-eligible catalog for non-admin users; admin sees the full catalog. `GET /products/:id` is internal-only. Admin writes with `POST /products`, `PATCH /products/:id`, and `PATCH /products/:id/status`.
+- `GET /plans`, `GET /plans/:id` — customer reads include only visible, active, currently available plans tied to active, billing-eligible products; associated subscriptions are customer-scoped. Admin writes with `POST /plans`, `PATCH /plans/:id`, and `PATCH /plans/:id/status`.
+- `GET /subscriptions`, `POST /subscriptions`, `GET /subscriptions/:id` — internal subscription/quotation operations; customer reads are ownership scoped. Customer changes are submitted through the request endpoints below.
 - `POST /subscriptions/transition` — admin/staff status state machine.
 - `POST /subscriptions/:id/plan-change/preview` and `POST /subscriptions/:id/plan-change` — validated plan/quantity preview and application; body includes `planId`, positive integer `quantity`, `timing` (`immediate` or `next_cycle`), optional `reason`.
-- `POST /billing/run-batch`, `GET /invoices`, `PATCH /invoices/:id/status` — recurring billing, invoices and status workflow.
-- `GET /payments`, `POST /payments` — payment list and payment recording; cash reconciliation is server side.
+- `POST /billing/run-batch`, `GET /invoices`, `GET /invoices/:id`, `PATCH /invoices/:id/status` — recurring billing, ownership-scoped invoice details and status workflow.
+- `GET /payments`, `GET /payments/:id`, `POST /payments` — payment list/details and internal payment recording; optional `subscriptionId` filters to payments for invoices on that subscription. Cash reconciliation is server side.
 - `GET /discounts`, `POST /discounts`, `PATCH /discounts/:id/status`, `POST /discounts/validate` — discount operations.
 
 ## Operations and analytics
@@ -40,6 +40,10 @@ The server enforces these permissions. Internal notes, revenue analytics and hea
 - `GET /analytics/revenue/summary` — admin/staff recurring portfolio, recorded collections, observed lifecycle movements, breakdowns, top customers and a 90-day renewal estimate. Supports `days` (7–365) or paired `startDate`/`endDate` in `YYYY-MM-DD` business dates (maximum 366 days). Missing historical subscription snapshots result in null cohort metrics and an explanatory limitation; no history is synthesized.
 - `GET /search?q=...` — role-scoped search across customers (internal roles), products, plans, subscriptions, invoices and payments.
 - `GET /notifications` — role-scoped operational notifications.
+- `GET /activity-log` — admin/staff append-only audit event listing.
+- `GET /settings/workspace`, `PATCH /settings/workspace` — workspace settings; only admins can update.
+- `GET /staff`, `PATCH /staff/:id/status` — admin-only staff listing and account status changes; staff creation remains `POST /auth/add-staff`.
+- `GET /subscription-requests` — internal queue or customer-owned requests; `POST /subscriptions/:id/requests` submits a customer request; `PATCH /subscription-requests/:id/review` records an admin/staff approval or rejection. Review currently records the decision and does not automatically apply the requested financial/lifecycle change.
 - `GET /dashboard/metrics` — admin/staff dashboard metrics.
 
 ## Financial and date conventions

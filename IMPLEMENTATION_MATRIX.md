@@ -1,0 +1,61 @@
+# Brightloop implementation matrix
+
+This is a source-level audit of the current workspace against the supplied Complete Admin & Customer Portal brief. “Partial” means a real route/API/model is connected, but one or more required actions, fields, validations, or states from the brief are absent. No item is called complete solely because a page exists. The MongoDB integration test was not run against a configured isolated database, so deployment data and runtime database behavior remain unverified.
+
+## Admin and staff portal
+
+| Screen | Route / component | API / model | Status and remaining work |
+| --- | --- | --- | --- |
+| Dashboard | `/app/dashboard` · `Dashboard.jsx` | `/dashboard/metrics`; subscriptions, invoices, payments | **Partial.** Live MRR, active counts, customer count, collection, outstanding, overdue, and status distribution. Missing the full date-filtered KPI set, ARR/churn/new/cancelled widgets, and required recent/top-customer lists on this screen. |
+| Customers | `/app/customers` · `ResourcePage.jsx` | `/customers`; `User` | **Partial.** Search, status/date/sort, portfolio amounts, pagination, CSV, create (admin), archive/edit, assigned staff and tags. Export is client-side and there are no bulk actions or full permission/validation matrix. |
+| Customer details | `/app/customers/:id` · `CustomerDetail.jsx` | `/customers/:id`, `/360`, notes/tags/activity; `User`, `CustomerNote`, `AuditEvent` | **Partial.** Overview, notes CRUD, tags, financial history and linked records. Internal activity is only as complete as event instrumentation; alternate email/customer type and some required edit flows are not fully surfaced. |
+| Products | `/app/products` · `ResourcePage.jsx` | `/products`; `Product` | **Partial.** Create/edit/archive, filters, CSV, variants via JSON form. Image upload, dedicated variant management, complete eligibility/tax controls and history are absent. |
+| Product details | `/app/products/:id` · `CatalogDetail.jsx` | `/products/:id`; `Product`, `Plan`, `Subscription` | **Partial.** Detail, variants and associated plans/subscriptions. Product revision history and dedicated variant CRUD are absent. Internal API access is role-checked. |
+| Plans | `/app/plans` · `ResourcePage.jsx` | `/plans`; `Plan`, `Product` | **Partial.** Create/edit/archive, frequency, price, quantity bounds, trial/setup fees, features and visibility. Duplicate action, cancellation/renewal policy controls, discounts eligibility, and effective revision history are incomplete. |
+| Plan details | `/app/plans/:id` · `CatalogDetail.jsx` | `/plans/:id`; `Plan`, `Subscription` | **Partial.** Plan properties, revision counter, linked subscriptions and activate/archive. Revision history and customer/subscription insights beyond the bounded list are missing. |
+| Quotations | `/app/quotations` · `ResourcePage.jsx` | `/subscriptions?status=Quotation`; `Subscription` | **Partial.** Creation now opens in `Quotation`, lifecycle supports confirmation/cancellation and expiry dates block late confirmation. Expiry requires a staff action. Edit/duplicate/send/accept/reject/conversion/PDF lifecycle is not complete. |
+| Quotation details | `/app/quotations/:id` · `SubscriptionDetail.jsx` | `/subscriptions/:id`; `Subscription` | **Partial.** Shared subscription detail and lifecycle status operations. No quotation preview/editor, customer delivery, acceptance/rejection workflow, or PDF document. |
+| Subscriptions | `/app/subscriptions` · `ResourcePage.jsx` | `/subscriptions`; `Subscription` | **Partial.** Scoped list, quote creation for staff, filters and lifecycle/plan operations. Scheduled cancellation, renewal operation, end/trial/payment method/assigned-staff fields and full line editing are missing. |
+| Subscription details | `/app/subscriptions/:id` · `SubscriptionDetail.jsx` | subscription read/transition/plan-change; `Subscription` | **Partial.** Pricing lines, invoice and payment histories, plan-change history, change preview/apply, customer request submission. Lifecycle controls, timeline, notes, cancellation scheduling, and full billing schedule are incomplete. |
+| Invoices | `/app/invoices` · `ResourcePage.jsx` | `/invoices`, `/billing/run-batch`; `Invoice` | **Partial.** Filter/list, recurring batch run, status update and CSV. Email, void rules, full server report filters, PDF generation, and processing result workflow are absent. |
+| Invoice details | `/app/invoices/:id` · `InvoiceDetail.jsx` | `/invoices/:id`; `Invoice`, `Payment` | **Partial.** Snapshot address, line totals, payment history, print/save-as-PDF. No server PDF, email, source quotation/tax document completeness, or void workflow. |
+| Payments | `/app/payments` · `ResourcePage.jsx` | `/payments`; `Payment`, `Invoice` | **Partial.** Manual invoice payment recording, partial/full balance reconciliation, list and CSV. Multi-invoice allocations, refunds, reconciliation workflow, gateway verification/webhooks and complete method metadata are absent. |
+| Payment details | `/app/payments/:id` · `PaymentDetail.jsx` | `/payments/:id`; `Payment`, `Invoice` | **Partial.** Payment/invoice ownership, allocation amounts, print receipt. Refund, UTR/cheque fields and downloadable receipt document are absent. |
+| Discounts | `/app/discounts` · `ResourcePage.jsx` | `/discounts`, `/discounts/validate`; `Discount` | **Partial.** Create, validation, activate/deactivate, applicable product/seat, minimums, dates, usage cap and quote calculation. Edit, per-customer eligibility/limits, usage history, export detail and several brief fields are absent. |
+| Reports | `/app/reports` · `Reports.jsx`; revenue analytics | `/analytics/revenue/summary`, `/dashboard/metrics` | **Partial.** Revenue/recurring portfolio charts, observed MRR movements, churn/retention caveats and CSV. The Reports page itself uses bounded list responses; customer/product/plan/method/status filter combinations, complete receivables/discount/renewal reports and PDF export are missing. |
+| Settings | `/app/settings` · `WorkspaceSettingsPage.jsx` | `/settings/workspace`; `WorkspaceSettings` | **Partial.** Company profile, INR/locale/timezone/date format, prefixes, terms and default tax rate. Logo upload, several tax/company fields, password/session/login history and full defaults are missing. |
+| Staff management | `/app/staff` · `StaffManagementPage.jsx` | `/staff`, `/auth/add-staff`; `User` | **Partial.** Admin-only staff add/list/activate/deactivate and session revocation. Per-staff permissions, phone/last login, password reset administration and login history are absent. |
+
+## Customer portal
+
+| Screen | Route / component | API / model | Status and remaining work |
+| --- | --- | --- | --- |
+| Dashboard | `/app/dashboard` · `Dashboard.jsx` | `/customers/me`, `/notifications`; `User`, `Subscription`, `Invoice`, `Payment` | **Partial.** Account-scoped subscriptions, upcoming renewal, balance, recent records and derived notices. Notification preferences/read state and next charge/tax detail are absent. |
+| Browse plans | `/app/plans` · `ResourcePage.jsx`, `CatalogDetail.jsx` | `/plans`, `/plans/:id`; `Plan`, `Product` | **Partial.** Visible active offerings and own linked subscriptions; backend filters dates and inactive products. No self-service checkout or live subscribe action. |
+| My subscriptions | `/app/subscriptions` · `ResourcePage.jsx` | `/subscriptions`; `Subscription` | **Partial.** Customer ownership enforced server-side and list/detail links. Search/status work, but the complete requested product/variant/renewal columns and table filters are not all present. |
+| Subscription details | `/app/subscriptions/:id` · `SubscriptionDetail.jsx` | `/subscriptions/:id`, invoices/payments, request API; `Subscription`, `SubscriptionRequest` | **Partial.** Owned record, plan/quantity/support/cancel requests and financial histories. Requests are approval records only; approval does not yet enact subscription changes. No direct support channel or configured approval policy. |
+| My invoices | `/app/invoices` · `ResourcePage.jsx` | `/invoices`; `Invoice` | **Partial.** Only owned invoices, filtering, detail, print. Full billing-period/status columns and robust all-filter exports are incomplete. |
+| Invoice details | `/app/invoices/:id` · `InvoiceDetail.jsx` | `/invoices/:id`; `Invoice`, `Payment` | **Partial.** Owned invoice, captured billing address, lines/totals/payments, print. PDF/email delivery is absent. |
+| My payments | `/app/payments` and `:id` · `ResourcePage.jsx`, `PaymentDetail.jsx` | `/payments`; `Payment`, `Invoice` | **Partial.** Only posted payments on own invoices; detail/receipt print. No gateway transaction status or downloaded receipt. |
+| Profile and account | `/app/settings` · `AccountPage.jsx` | `/customers/me`, `/auth/change-password`; `User` | **Partial.** Permitted profile/billing fields, guarded account closure, current-password verification, password policy checks and session revocation. Notification preferences and alternate email are incomplete. |
+| Requests | `/app/subscription-requests` · `SubscriptionRequestsPage.jsx` | `/subscription-requests`, `/subscriptions/:id/requests`; `SubscriptionRequest` | **Partial.** Customer-scoped submission/status and staff review. Approval is recorded but does not execute plan/quantity/cancellation changes. |
+
+## Additional operations
+
+| Feature | Route / component | API / model | Status and remaining work |
+| --- | --- | --- | --- |
+| Billing calendar | `/app/billing-calendar` · `BillingCalendarPage` | `/billing/calendar`; subscriptions/invoices | **Partial.** Month/week/day/list, filters and record links. Actual processing outcome/attempt status and invoice creation processing report are absent. |
+| Subscription health | `/app/subscription-health` · `SubscriptionHealthPage` | `/subscriptions/health`; subscriptions/invoices/payments | **Partial.** Paginated rule-based indicators and linked records. It is not a payment retry engine and does not expose every required health category/action. |
+| Activity log | `/app/activity` · `ActivityLogPage.jsx` | `/activity-log`, customer activity; `AuditEvent` | **Partial.** Append-only event records and selected customer/catalog/discount/payment/subscription/settings/staff writes. Invoice lifecycle, request review, authentication and some edits are not instrumented. |
+| Notifications | `/app/notifications` · `NotificationsPage.jsx`, Shell popover | `/notifications`; derived from invoices/subscriptions | **Partial.** Real overdue and near-renewal links in the page and popover. No persisted recipient notification model, unread/read lifecycle, preferences, or notification action URL management. |
+| Saved table views | `AdvancedTableTools.jsx`, `ResourcePage.jsx` | Browser local storage | **Partial.** Per-user browser preferences, columns/order/density/sort and named views. Not synchronized to the account/server and does not persist pagination preference. |
+
+## Delivery counts and important limits
+
+- Audited screen/feature entries: **33** (19 admin/staff, 9 customer including plan browsing and requests, 5 additional operational features).
+- Fully meeting every field, action, validation, state, and export requirement in the supplied brief: **0**. The routes above have useful working portions, but the brief's acceptance criteria are broader than the current implementation.
+- Partially implemented and connected to real code: **33**.
+- Not implemented as specified: **the remaining criteria listed in each row**, especially quotation lifecycle/document delivery, refund/multi-invoice allocation, report filters/PDF exports, notification read state, cross-device saved views, password/session administration, and subscription request execution.
+- Money conventions: legacy model fields remain INR major units for compatibility; new supported financial paths use integer paise snapshots. No broad conversion was applied because the live database's historical units/currencies were not available for audit.
+- No payment gateway is integrated. A manually entered reference is not treated as gateway verification.
+- The opt-in MongoDB integration test was skipped because `BRIGHTLOOP_INTEGRATION_DB` was not configured. Do not set that variable to production: the integration test drops its target database.

@@ -1,8 +1,13 @@
 const Counter = require('../models/Counter');
+const WorkspaceSettings = require('../models/WorkspaceSettings');
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-async function nextBusinessIdentifier({ prefix, year = new Date().getUTCFullYear(), Model, field }) {
+async function nextBusinessIdentifier({ prefix, settingsField, year = new Date().getUTCFullYear(), Model, field }) {
+  if (settingsField) {
+    const settings = await WorkspaceSettings.findOne({ key: 'default' }).select(settingsField).lean();
+    prefix = settings?.[settingsField] || prefix;
+  }
   const key = `${prefix}:${year}`;
   const pattern = new RegExp(`^${escapeRegex(prefix)}-${year}-(\\d+)$`);
   const latest = await Model.findOne({ [field]: { $regex: pattern } }).sort({ [field]: -1 }).select(field).lean();

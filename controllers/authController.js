@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const crypto = require('crypto');
 const { sendPasswordReset } = require('../services/mailer');
 const User = require('../models/User');
+const { recordAudit } = require('../services/auditService');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const AUTH_COOKIE = 'brightloop_session';
@@ -174,6 +176,29 @@ exports.getMe = async (req, res) => {
   }
 };
 
+exports.changePassword = async (req, res) => {
+  try {
+    const currentPassword = typeof req.body.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body.newPassword === 'string' ? req.body.newPassword : '';
+    const strong = newPassword.length > 8 && /[A-Z]/.test(newPassword) && /[a-z]/.test(newPassword) && /[!@#$%^&*(),.?":{}|<>]/.test(newPassword);
+    if (!currentPassword || !strong) return res.status(400).json({ success: false, error: 'Enter your current password and a new password longer than 8 characters with uppercase, lowercase, and a special character.' });
+    const user = await User.findById(req.user._id);
+    if (!user || !await user.comparePassword(currentPassword)) return res.status(400).json({ success: false, error: 'Current password is incorrect.' });
+    if (await user.comparePassword(newPassword)) return res.status(400).json({ success: false, error: 'Choose a password you have not used for this account.' });
+    user.password = newPassword;
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    await user.save();
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+    recordAudit({ actor: req.user, action: 'password_changed', resourceType: 'User', resourceId: user._id }).catch(() => {});
+    res.json({ success: true, message: 'Password changed. Sign in again with your new password.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Unable to change your password.' });
+  }
+};
+
 // POST /api/auth/forgot-password (Page 2: "reset link should arrive at their registered email")
 exports.forgotPassword = async (req, res) => {
   try {
@@ -313,6 +338,7 @@ exports.addStaff = async (req, res) => {
     });
 
     await newStaff.save();
+    recordAudit({ actor: req.user, action: 'staff_created', resourceType: 'User', resourceId: newStaff._id, newValue: { name: newStaff.name, email: newStaff.email, role: newStaff.role } }).catch(() => {});
 
     res.status(201).json({
       success: true,
@@ -328,4 +354,18 @@ exports.addStaff = async (req, res) => {
     if (err.code === 11000) return res.status(409).json({ success: false, error: 'A user already uses that email address.' });
     res.status(500).json({ success: false, error: 'Unable to add staff member.' });
   }
+};
+
+exports.listStaff = async (req, res) => {
+  const data = await User.find({ role: 'staff' }).select('name email phone accountStatus createdAt').sort({ createdAt: -1 }).lean();
+  res.json({ success: true, data });
+};
+
+exports.setStaffStatus = async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid staff id.' });
+  if (!['Active', 'Archived'].includes(req.body.accountStatus)) return res.status(400).json({ success: false, error: 'Choose Active or Archived.' });
+  const staff = await User.findOneAndUpdate({ _id: req.params.id, role: 'staff' }, { $set: { accountStatus: req.body.accountStatus }, $inc: { sessionVersion: 1 } }, { new: true, runValidators: true }).select('name email phone accountStatus createdAt');
+  if (!staff) return res.status(404).json({ success: false, error: 'Staff member not found.' });
+  recordAudit({ actor: req.user, action: 'staff_status_changed', resourceType: 'User', resourceId: staff._id, newValue: { accountStatus: staff.accountStatus } }).catch(() => {});
+  res.json({ success: true, data: staff });
 };

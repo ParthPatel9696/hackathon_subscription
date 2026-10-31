@@ -2,6 +2,7 @@ const Invoice = require('../models/Invoice');
 const mongoose = require('mongoose');
 const { runRecurringBilling } = require('../services/billingService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
+const { recordAudit } = require('../services/auditService');
 
 // POST /api/billing/run-batch
 // Generates invoices for all active subscriptions due for billing, preventing double-billing.
@@ -51,7 +52,22 @@ exports.getInvoices = async (req, res) => {
     const [invoices, total] = await Promise.all([Invoice.find(query).sort(sortFromQuery(req.query.sort, { record: 'invoiceNumber', status: 'status', amount: 'grandTotalMinor', details: 'customerName', dueDate: 'dueDate' }, { createdAt: -1 })).skip((page - 1) * pageSize).limit(pageSize), Invoice.countDocuments(query)]);
     res.json({ success: true, count: invoices.length, total, page, pageSize, data: invoices });
   } catch (err) {
-    res.status(500).json({ success: false, error: 'Unable to update invoice status.' });
+    res.status(500).json({ success: false, error: 'Unable to load invoices.' });
+  }
+};
+
+exports.getInvoiceById = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid invoice id.' });
+    const filter = { _id: req.params.id };
+    if (req.user.role === 'customer') filter.customer = req.user._id;
+    const invoice = await Invoice.findOne(filter).lean();
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found.' });
+    const Payment = require('../models/Payment');
+    const payments = await Payment.find({ invoice: invoice._id, $or: [{ status: 'posted' }, { status: { $exists: false } }] }).sort({ paymentDate: -1 }).lean();
+    res.json({ success: true, data: { ...invoice, payments } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Unable to load invoice details.' });
   }
 };
 
@@ -79,6 +95,7 @@ exports.updateInvoiceStatus = async (req, res) => {
     else filter.paidAmountMinor = paidAmountMinor;
     const updated = await Invoice.findOneAndUpdate(filter, { $set: { status } }, { new: true, runValidators: true });
     if (!updated) return res.status(409).json({ success: false, error: 'Invoice changed while you were updating it. Refresh and try again.' });
+    recordAudit({ actor: req.user, action: 'invoice_status_changed', resourceType: 'Invoice', resourceId: updated._id, customer: updated.customer, previousValue: { status: invoice.status }, newValue: { status: updated.status }, metadata: { invoiceNumber: updated.invoiceNumber } }).catch(() => {});
     res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

@@ -2,6 +2,7 @@ const Subscription = require('../models/Subscription');
 const Product = require('../models/Product');
 const Plan = require('../models/Plan');
 const User = require('../models/User');
+const WorkspaceSettings = require('../models/WorkspaceSettings');
 const mongoose = require('mongoose');
 const { fromMinor, toMinor, calculateLine } = require('../utils/money');
 const { advanceBillingDate } = require('../services/billingService');
@@ -10,12 +11,14 @@ const Discount = require('../models/Discount');
 const { assertDiscountAvailable, calculateDiscountMinor, reserveDiscountUsage, releaseDiscountUsage } = require('../services/discountService');
 const { calculateProrationMinor } = require('../services/proration');
 const crypto = require('crypto');
+const { recordAudit } = require('../services/auditService');
 const { sortFromQuery, applyNumericRange, applyDateRange } = require('../utils/listQuery');
+const { normalizePaymentTerms } = require('../utils/paymentTerms');
 
 // Valid state transitions map
 const VALID_TRANSITIONS = {
   Draft: ['Quotation', 'Cancelled'],
-  Quotation: ['Confirmed', 'Draft', 'Cancelled'],
+  Quotation: ['Confirmed', 'Draft', 'Cancelled', 'Expired'],
   Confirmed: ['Active', 'Cancelled'],
   Active: ['Paused', 'Closed'],
   Paused: ['Active', 'Closed'],
@@ -94,7 +97,7 @@ async function calculatePlanChange(subscription, body) {
   const plan = await Plan.findById(body.planId);
   if (!plan) throw Object.assign(new Error('Plan not found.'), { statusCode: 404 });
   if (plan.availableFrom && plan.availableFrom > new Date() || plan.availableTo && plan.availableTo < new Date()) throw Object.assign(new Error('This plan is not currently available.'), { statusCode: 400 });
-  if (quantity < plan.minQuantity) throw Object.assign(new Error(`This plan requires a minimum quantity of ${plan.minQuantity}.`), { statusCode: 400 });
+  if (quantity < plan.minQuantity || plan.maxQuantity != null && quantity > plan.maxQuantity) throw Object.assign(new Error(`Choose a quantity between ${plan.minQuantity} and ${plan.maxQuantity ?? 'no limit'}.`), { statusCode: 400 });
   const currentLine = subscription.lines.find((line) => String(line.product) === String(plan.product));
   if (!currentLine) throw Object.assign(new Error('Plan changes require the new plan to use a product already included on this subscription.'), { statusCode: 400 });
   if (subscription.scheduledPlanChange) throw Object.assign(new Error('A plan change is already scheduled for this subscription.'), { statusCode: 409 });
@@ -145,6 +148,7 @@ exports.changePlan = async (req, res) => {
     const timing = req.body.timing === 'next_cycle' ? 'next_cycle' : 'immediate';
     const reason = String(req.body.reason || '').trim().slice(0, 500);
     const operationKey = crypto.randomUUID();
+    const previous = { plan: sub.planName, recurring: sub.recurringTotalMinor ?? toMinor(sub.recurringTotal), quantity: change.currentLine.quantity };
     const oldNetRecurringMinor = Math.max(0, (sub.subtotalMinor ?? toMinor(sub.subtotal || 0)) - (sub.discountTotalMinor ?? toMinor(sub.discountTotal || 0)));
     const newNetRecurringMinor = Math.max(0, change.subtotalMinor - change.discountTotalMinor);
     const optimisticFilter = { _id: sub._id, status: 'Active', $or: [{ __v: sub.__v }, { __v: { $exists: false } }] };
@@ -153,13 +157,13 @@ exports.changePlan = async (req, res) => {
       optimisticFilter.scheduledPlanChange = null;
       update = { $set: { scheduledPlanChange: { plan: change.plan._id, planName: change.plan.name, quantity: change.quantity, billingFrequency: change.plan.billingFrequency, recurringTotalMinor: change.recurringTotalMinor, subtotalMinor: change.subtotalMinor, taxTotalMinor: change.taxTotalMinor, discountTotalMinor: change.discountTotalMinor, line: change.line, effectiveAt: change.effectiveAt, prorationMinor: 0, reason, operationKey, requestedBy: req.user._id } }, $inc: { __v: 1 } };
     } else {
-      const previous = { plan: sub.planName, recurring: sub.recurringTotalMinor ?? toMinor(sub.recurringTotal), quantity: change.currentLine.quantity };
       const lines = sub.lines.map((line) => String(line.product) === String(change.plan.product) ? change.line : line);
       optimisticFilter.scheduledPlanChange = null;
       update = { $set: { plan: change.plan._id, planName: change.plan.name, billingFrequency: change.plan.billingFrequency, lines, subtotalMinor: change.subtotalMinor, taxTotalMinor: change.taxTotalMinor, discountTotalMinor: change.discountTotalMinor, subtotal: fromMinor(change.subtotalMinor), taxTotal: fromMinor(change.taxTotalMinor), discountTotal: fromMinor(change.discountTotalMinor), recurringTotalMinor: change.recurringTotalMinor, recurringTotal: fromMinor(change.recurringTotalMinor) }, $push: { planChangeHistory: { previousPlan: previous.plan, newPlan: change.plan.name, previousRecurringMinor: previous.recurring, newRecurringMinor: change.recurringTotalMinor, previousNetRecurringMinor: oldNetRecurringMinor, newNetRecurringMinor, previousQuantity: previous.quantity, newQuantity: change.quantity, prorationMinor: change.prorationMinor, effectiveAt: change.effectiveAt, changedBy: req.user._id, reason, operationKey }, statusHistory: { eventType: 'plan_change', previousStatus: 'Active', status: 'Active', previousNetRecurringMinor: oldNetRecurringMinor, netRecurringMinor: newNetRecurringMinor, previousBillingFrequency: sub.billingFrequency, billingFrequency: change.plan.billingFrequency, effectiveAt: change.effectiveAt, actor: req.user._id, reason } }, $inc: { __v: 1 } };
     }
     const updated = await Subscription.findOneAndUpdate(optimisticFilter, update, { new: true, runValidators: true });
     if (!updated) return res.status(409).json({ success: false, error: 'Subscription changed or a plan change was already scheduled. Reload and retry.' });
+    recordAudit({ actor: req.user, action: timing === 'next_cycle' ? 'plan_change_scheduled' : 'plan_changed', resourceType: 'Subscription', resourceId: updated._id, customer: updated.customer, previousValue: { plan: previous.plan, recurringMinor: previous.recurring }, newValue: { plan: change.plan.name, recurringMinor: change.recurringTotalMinor, quantity: change.quantity }, metadata: { prorationMinor: change.prorationMinor, effectiveAt: change.effectiveAt, reason } }).catch(() => {});
     res.json({ success: true, data: updated, prorationMinor: change.prorationMinor, collected: false, refunded: false });
   } catch (err) { res.status(err.statusCode || (err.code === 11000 ? 409 : 400)).json({ success: false, error: err.message || 'Unable to change subscription plan.' }); }
 };
@@ -180,16 +184,20 @@ exports.transitionState = async (req, res) => {
         error: `Invalid lifecycle transition from ${sub.status} to ${targetStatus}. Allowed: ${allowed.join(', ') || 'None'}`
       });
     }
+    if (sub.status === 'Quotation' && targetStatus === 'Confirmed' && sub.quotationValidUntil && new Date(sub.quotationValidUntil) < new Date()) return res.status(409).json({ success: false, error: 'This quotation has expired and cannot be confirmed. Mark it expired or create a new quotation.' });
+    if (sub.status === 'Quotation' && targetStatus === 'Expired' && sub.quotationValidUntil && new Date(sub.quotationValidUntil) >= new Date()) return res.status(409).json({ success: false, error: 'This quotation has not reached its expiry date.' });
 
     const update = { status: targetStatus };
     const netRecurringMinor = Math.max(0, (sub.subtotalMinor ?? toMinor(sub.subtotal || 0)) - (sub.discountTotalMinor ?? toMinor(sub.discountTotal || 0)));
     const set = { ...update };
-    if (targetStatus === 'Closed') set.closedAt = new Date();
+    if (['Closed', 'Cancelled', 'Expired'].includes(targetStatus)) set.closedAt = new Date();
     if (targetStatus === 'Active') set.closedAt = null;
     if (targetStatus === 'Active') update.nextBillingDate = advanceBillingDate(new Date(), sub.billingFrequency);
     if (reason) set.notes = (sub.notes ? `${sub.notes} | ` : '') + `State changed to ${targetStatus}: ${String(reason).slice(0, 500)}`;
     const updated = await Subscription.findOneAndUpdate({ _id: sub._id, status: sub.status }, { $set: set, $push: { statusHistory: { eventType: 'status_change', previousStatus: sub.status, status: targetStatus, previousNetRecurringMinor: netRecurringMinor, netRecurringMinor, billingFrequency: sub.billingFrequency, previousBillingFrequency: sub.billingFrequency, effectiveAt: new Date(), actor: req.user._id, reason: String(reason || '').slice(0, 500) } } }, { new: true, runValidators: true });
     if (!updated) return res.status(409).json({ success: false, error: 'Subscription status changed. Refresh and try again.' });
+    if (['Cancelled', 'Expired'].includes(targetStatus) && sub.discount) await releaseDiscountUsage(sub.discount);
+    recordAudit({ actor: req.user, action: 'subscription_status_changed', resourceType: 'Subscription', resourceId: updated._id, customer: updated.customer, previousValue: { status: sub.status }, newValue: { status: targetStatus }, metadata: { reason: String(reason || '').slice(0, 500) } }).catch(() => {});
 
     res.json({
       success: true,
@@ -290,7 +298,7 @@ exports.createSubscription = async (req, res) => {
     if (plan.product) {
       const primaryLine = baseLines.find((line) => line.product.toString() === plan.product.toString());
       if (!primaryLine) return res.status(400).json({ success: false, error: 'This plan requires a line for its associated product.' });
-      if (primaryLine.quantity < plan.minQuantity) return res.status(400).json({ success: false, error: `This plan requires a minimum quantity of ${plan.minQuantity}.` });
+      if (primaryLine.quantity < plan.minQuantity || plan.maxQuantity != null && primaryLine.quantity > plan.maxQuantity) return res.status(400).json({ success: false, error: `Choose a quantity between ${plan.minQuantity} and ${plan.maxQuantity ?? 'no limit'}.` });
     }
 
     const subtotalMinor = baseLines.reduce((sum, line) => sum + line.subtotalMinor, 0);
@@ -373,6 +381,8 @@ exports.createSubscription = async (req, res) => {
 
     const nextBillingDate = advanceBillingDate(startDate, plan.billingFrequency);
 
+    const workspaceSettings = await WorkspaceSettings.findOne({ key: 'default' }).select('defaultPaymentTerms').lean();
+    const resolvedPaymentTerms = normalizePaymentTerms(paymentTerms || workspaceSettings?.defaultPaymentTerms || 'Net 30 Days');
     const newSub = new Subscription({
       subscriptionNumber,
       customer: customer._id,
@@ -384,7 +394,7 @@ exports.createSubscription = async (req, res) => {
       startDate,
       expiryDate,
       nextBillingDate,
-      paymentTerms: paymentTerms || 'Net 30 Days',
+      paymentTerms: resolvedPaymentTerms,
       lines: computedLines,
       subtotal: fromMinor(subtotalMinor),
       taxTotal: fromMinor(taxTotalMinor),
@@ -399,8 +409,8 @@ exports.createSubscription = async (req, res) => {
       discountValue: discount?.value || 0,
       recurringTotal: fromMinor(recurringTotalMinor),
       recurringTotalMinor,
-      status: 'Draft',
-      statusHistory: [{ eventType: 'created', previousStatus: null, status: 'Draft', netRecurringMinor: Math.max(0, subtotalMinor - discountTotalMinor), billingFrequency: plan.billingFrequency, effectiveAt: new Date(), actor: req.user._id }],
+      status: 'Quotation',
+      statusHistory: [{ eventType: 'created', previousStatus: null, status: 'Quotation', netRecurringMinor: Math.max(0, subtotalMinor - discountTotalMinor), billingFrequency: plan.billingFrequency, effectiveAt: new Date(), actor: req.user._id }],
       quotationValidUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000) // 15 days
     });
 
@@ -411,6 +421,7 @@ exports.createSubscription = async (req, res) => {
       if (discount) await releaseDiscountUsage(discount._id);
       throw saveError;
     }
+    recordAudit({ actor: req.user, action: 'quotation_created', resourceType: 'Subscription', resourceId: newSub._id, customer: newSub.customer, newValue: { status: newSub.status, plan: newSub.planName, recurringTotalMinor: newSub.recurringTotalMinor }, metadata: { subscriptionNumber: newSub.subscriptionNumber } }).catch(() => {});
     res.status(201).json({ success: true, data: newSub });
   } catch (err) {
     const status = err.statusCode || (err instanceof TypeError || ['ValidationError', 'CastError'].includes(err.name) ? 400 : 500);

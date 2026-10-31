@@ -1,8 +1,11 @@
 const mongoose = require('mongoose');
 const Subscription = require('../models/Subscription');
 const Invoice = require('../models/Invoice');
+const User = require('../models/User');
+const WorkspaceSettings = require('../models/WorkspaceSettings');
 const { nextBusinessIdentifier } = require('./identifierService');
 const { fromMinor, toMinor } = require('../utils/money');
+const { paymentTermsDays } = require('../utils/paymentTerms');
 
 const advanceBillingDate = (date, frequency) => {
   const nextDate = new Date(date);
@@ -62,6 +65,10 @@ async function applyDueScheduledPlanChange(subscription, now, session) {
 }
 
 async function makeInvoiceDocument(subscription, period, now) {
+  const [customer, company] = await Promise.all([
+    User.findById(subscription.customer).select('name companyName billingContactName billingAddress billingAddressLine2 billingCity billingState billingPostalCode billingCountry taxId').lean(),
+    WorkspaceSettings.findOne({ key: 'default' }).lean()
+  ]);
   const lines = subscription.lines.map((line) => ({
     productName: line.productName,
     variantName: line.variantName,
@@ -78,8 +85,9 @@ async function makeInvoiceDocument(subscription, period, now) {
     total: line.lineTotal,
     totalMinor: line.lineTotalMinor ?? Math.round(line.lineTotal * 100)
   }));
-  const invoiceNumber = await nextBusinessIdentifier({ prefix: 'INV', Model: Invoice, field: 'invoiceNumber', year: now.getUTCFullYear() });
-  const dueDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const invoiceNumber = await nextBusinessIdentifier({ prefix: 'INV', settingsField: 'invoicePrefix', Model: Invoice, field: 'invoiceNumber', year: now.getUTCFullYear() });
+  const dueDate = new Date(now);
+  dueDate.setUTCDate(dueDate.getUTCDate() + paymentTermsDays(subscription.paymentTerms));
   const subtotalMinor = subscription.subtotalMinor ?? Math.round(subscription.subtotal * 100);
   const taxTotalMinor = subscription.taxTotalMinor ?? Math.round(subscription.taxTotal * 100);
   const discountTotalMinor = subscription.discountTotalMinor ?? Math.round(subscription.discountTotal * 100);
@@ -91,6 +99,8 @@ async function makeInvoiceDocument(subscription, period, now) {
     customer: subscription.customer,
     customerName: subscription.customerName,
     customerEmail: subscription.customerEmail,
+    companySnapshot: company ? { name: company.legalName || company.companyName, displayName: company.companyName, logoUrl: company.logoUrl || '', email: company.email || '', phone: company.phone || '', website: company.website || '', address: company.registeredAddress || '', taxId: company.taxId || '' } : { name: 'Brightloop' },
+    billingAddressSnapshot: customer ? { name: customer.billingContactName || customer.companyName || customer.name, line1: customer.billingAddress || '', line2: customer.billingAddressLine2 || '', city: customer.billingCity || '', state: customer.billingState || '', postalCode: customer.billingPostalCode || '', country: customer.billingCountry || 'India', taxId: customer.taxId || '' } : {},
     invoiceDate: now,
     dueDate,
     billingPeriodStart: period.start,

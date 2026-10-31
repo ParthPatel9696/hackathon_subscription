@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Plus, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api';
@@ -12,6 +12,12 @@ import AdvancedTableTools from '../components/AdvancedTableTools';
 
 export default function ResourcePage({ title, endpoint, resource }) {
   const currentUser = useAuthStore((state) => state.user);
+  const queryClient = useQueryClient();
+  const isInternal = ['admin', 'staff'].includes(currentUser?.role);
+  const isAdmin = currentUser?.role === 'admin';
+  const pageTitle = currentUser?.role === 'customer'
+    ? ({ plans: 'Browse plans', subscriptions: 'My subscriptions', invoices: 'My invoices', payments: 'My payments' }[resource] || title)
+    : title;
   const [searchParams, setSearchParams] = useSearchParams();
   const [customerSearch, setCustomerSearch] = useState(() => searchParams.get('search') || '');
   const [customerPage, setCustomerPage] = useState(1);
@@ -24,9 +30,12 @@ export default function ResourcePage({ title, endpoint, resource }) {
   const [customerStatus, setCustomerStatus] = useState('ALL');
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get('search') || '');
   const [modal, setModal] = useState(null);
+  const [exportError, setExportError] = useState('');
   const preferenceKey = `brightloop_table_${currentUser?.id || 'user'}_${resource}`;
   const [preferences, setPreferences] = useState(() => readPreferences(preferenceKey));
-  const tableColumns = [{ key: 'record', label: 'Name / number' }, { key: 'status', label: 'Status' }, { key: 'amount', label: 'Amount' }, { key: 'details', label: 'Details' }, { key: 'actions', label: 'Actions' }];
+  const tableColumns = resource === 'customers'
+    ? [{ key: 'record', label: 'Customer' }, { key: 'status', label: 'Status' }, { key: 'activeSubscriptionCount', label: 'Active subs' }, { key: 'totalInvoiced', label: 'Invoiced' }, { key: 'totalPaid', label: 'Paid' }, { key: 'outstanding', label: 'Outstanding' }, { key: 'lastPaymentDate', label: 'Last payment' }, { key: 'assignedStaff', label: 'Assigned staff' }, { key: 'details', label: 'Company / tags' }, { key: 'actions', label: 'Actions' }]
+    : [{ key: 'record', label: 'Name / number' }, { key: 'status', label: 'Status' }, { key: 'amount', label: 'Amount' }, { key: 'details', label: 'Details' }, { key: 'actions', label: 'Actions' }];
   const [visibleColumns, setVisibleColumns] = useState(() => preferences.visible || tableColumns.map((column) => column.key));
   const [columnOrder, setColumnOrder] = useState(() => preferences.order || tableColumns.map((column) => column.key));
   const [density, setDensity] = useState(() => preferences.density || 'comfortable');
@@ -57,8 +66,12 @@ export default function ResourcePage({ title, endpoint, resource }) {
     ? `/customers?search=${encodeURIComponent(debouncedSearch)}&page=${customerPage}&limit=50&status=${customerStatus}&startDate=${dateFrom}&endDate=${dateTo}${sortQuery ? `&sort=${encodeURIComponent(sortQuery)}` : ''}`
     : `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${serverPage}&limit=50&search=${encodeURIComponent(debouncedSearch)}&minAmount=${minAmount}&maxAmount=${maxAmount}&startDate=${dateFrom}&endDate=${dateTo}${serverStatus !== 'ALL' ? `&status=${encodeURIComponent(serverStatus)}` : ''}${sortQuery ? `&sort=${encodeURIComponent(sortQuery)}` : ''}`;
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: [resource === 'customers' ? 'customers' : requestUrl, requestUrl],
+    queryKey: [resource === 'quotations' ? 'subscriptions' : resource, requestUrl],
     queryFn: async () => (await api.get(requestUrl)).data
+  });
+  const discountStatus = useMutation({
+    mutationFn: async ({ id, isActive }) => (await api.patch(`/discounts/${id}/status`, { isActive })).data.data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['discounts'] })
   });
   const rows = Array.isArray(data?.data) ? data.data : [];
   const { search, setSearch, status, setStatus, filtered } = useTableFilters(rows, searchParams.get('search') || '');
@@ -80,6 +93,8 @@ export default function ResourcePage({ title, endpoint, resource }) {
     if (resource === 'customers') { setCustomerSearch(value); setCustomerPage(1); }
   };
   const exportCsv = async (sourceRows) => {
+    setExportError('');
+    try {
     let rowsToExport = sourceRows;
     if (!rowsToExport) {
       rowsToExport = [...rows];
@@ -94,7 +109,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
         if (!nextRows.length) break;
         rowsToExport.push(...nextRows);
       }
-      if (rowsToExport.length < total) return;
+      if (rowsToExport.length < total) { setExportError('Some filtered records could not be loaded. Retry the export.'); return; }
     }
     const keys = [...new Set([...rowsToExport.flatMap((row) => Object.keys(row)), ...(['products','plans','subscriptions','quotations','invoices','payments','discounts'].includes(resource) ? ['currency'] : [])])].filter((key) => !['_id', '__v', 'lines', 'variants'].includes(key));
     const csvCell = (value) => {
@@ -108,6 +123,9 @@ export default function ResourcePage({ title, endpoint, resource }) {
     link.download = `${title.toLowerCase().replaceAll(' ', '-')}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
+    } catch {
+      setExportError('CSV export failed. Check your connection and retry.');
+    }
   };
   const sortedRows = [...filtered].sort((a, b) => {
     for (const { key, direction } of sorts) {
@@ -122,7 +140,7 @@ export default function ResourcePage({ title, endpoint, resource }) {
   const toggleSelected = (row, checked) => setSelectedRows((current) => { const next = { ...current }; if (checked) next[row._id] = row; else delete next[row._id]; return next; });
 
   return <>
-    <PageHeader title={title} subtitle="Records from the Brightloop workspace." />
+    <PageHeader title={pageTitle} subtitle={currentUser?.role === 'customer' ? 'Your Brightloop account records.' : 'Records from the Brightloop workspace.'} />
     <div className="resource-toolbar">
       <label className="sr-only" htmlFor="record-search">Search records</label>
       <input id="record-search" className="field resource-search" placeholder={resource === 'customers' ? 'Search name, company, or email…' : 'Search records…'} value={search} onChange={(event) => onSearch(event.target.value)} />
@@ -132,14 +150,15 @@ export default function ResourcePage({ title, endpoint, resource }) {
       {statuses.length > 0 && <><label className="sr-only" htmlFor="status-filter">Filter by status</label><select id="status-filter" className="field resource-status-filter" value={resource === 'customers' ? customerStatus : serverStatus} onChange={(event) => { setStatus(event.target.value); if (resource === 'customers') setCustomerStatus(event.target.value); else { setServerStatus(event.target.value); setServerPage(1); } }}><option value="ALL">All statuses</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></>}
       <button type="button" className="button secondary-button" onClick={() => refetch()}><RefreshCw size={15}/> Refresh</button>
       <button type="button" className="button secondary-button" onClick={exportCsv}><Download size={15}/> Export CSV</button>
-      {resource === 'subscriptions' && <button type="button" className="button" onClick={() => setModal('subscription')}><Plus size={15}/> New quotation</button>}
-      {resource === 'customers' && currentUser?.role === 'admin' && <button type="button" className="button" onClick={() => setModal('customer')}><Plus size={15}/> Add customer</button>}
-      {resource === 'products' && <button type="button" className="button" onClick={() => setModal('product')}><Plus size={15}/> Add product</button>}
-      {resource === 'plans' && <button type="button" className="button" onClick={() => setModal('plan')}><Plus size={15}/> Create plan</button>}
-      {resource === 'payments' && <button type="button" className="button" onClick={() => setModal('payment')}><Plus size={15}/> Record payment</button>}
-      {resource === 'discounts' && <button type="button" className="button" onClick={() => setModal('discount')}><Plus size={15}/> New discount</button>}
-      {resource === 'invoices' && <button type="button" className="button" onClick={() => setModal('billing')}><RefreshCw size={15}/> Run billing</button>}
+      {resource === 'subscriptions' && isInternal && <button type="button" className="button" onClick={() => setModal('subscription')}><Plus size={15}/> New quotation</button>}
+      {resource === 'customers' && isAdmin && <button type="button" className="button" onClick={() => setModal('customer')}><Plus size={15}/> Add customer</button>}
+      {resource === 'products' && isAdmin && <button type="button" className="button" onClick={() => setModal('product')}><Plus size={15}/> Add product</button>}
+      {resource === 'plans' && isAdmin && <button type="button" className="button" onClick={() => setModal('plan')}><Plus size={15}/> Create plan</button>}
+      {resource === 'payments' && isInternal && <button type="button" className="button" onClick={() => setModal('payment')}><Plus size={15}/> Record payment</button>}
+      {resource === 'discounts' && isAdmin && <button type="button" className="button" onClick={() => setModal('discount')}><Plus size={15}/> New discount</button>}
+      {resource === 'invoices' && isInternal && <button type="button" className="button" onClick={() => setModal('billing')}><RefreshCw size={15}/> Run billing</button>}
     </div>
+    {exportError && <p className="error mb-4" role="alert">{exportError}</p>}
     <AdvancedTableTools columns={tableColumns} visible={visibleColumns} setVisible={setVisibleColumns} order={columnOrder} setOrder={setColumnOrder} density={density} setDensity={setDensity} views={savedViews} onSaveView={saveView} onLoadView={loadView} selectedCount={Object.keys(selectedRows).length} onExportSelected={() => exportCsv(Object.values(selectedRows))} />
     {resource !== 'customers' && (data?.total || 0) > (data?.pageSize || 50) && <div className="pagination-row"><span>Showing {((serverPage - 1) * (data.pageSize || 50)) + 1}–{Math.min(serverPage * (data.pageSize || 50), data.total)} of {data.total}</span><div><button className="pagination-button" disabled={serverPage <= 1} onClick={() => setServerPage((p) => p - 1)}>Previous</button><button className="pagination-button" disabled={serverPage * (data.pageSize || 50) >= data.total} onClick={() => setServerPage((p) => p + 1)}>Next</button></div></div>}
     {error && <p className="error mb-5" role="alert">{error.response?.data?.error || 'Unable to load records.'} <button className="inline-action" onClick={() => refetch()}>Try again</button></p>}
@@ -149,22 +168,28 @@ export default function ResourcePage({ title, endpoint, resource }) {
           {sortedRows.map((row) => <tr key={row._id || row.id || row.code || row.invoiceNumber}>
             <td><input type="checkbox" aria-label={`Select ${row.name || row.subscriptionNumber || row.invoiceNumber || 'record'}`} checked={Boolean(selectedRows[row._id])} onChange={(e) => toggleSelected(row, e.target.checked)}/></td>
             {columnOrder.filter((key) => visibleColumns.includes(key)).map((key) => <td key={key} className={`${key === 'amount' ? 'amount-cell' : ''} ${key === 'record' ? 'record-primary' : ''} ${key === 'details' ? 'record-detail' : ''} ${key === 'actions' ? 'record-actions' : ''}`}>
-            {key === 'record' && <>{resource === 'subscriptions' && row._id ? <Link to={`/app/subscriptions/${row._id}`}>{row.subscriptionNumber}</Link> : row.name || row.subscriptionNumber || row.invoiceNumber || row.email || row.code || 'Record'}{row.email && row.name && <small>{row.email}</small>}</>}
+            {key === 'record' && <>{recordHref(resource, row) ? <Link to={recordHref(resource, row)}>{row.name || row.subscriptionNumber || row.invoiceNumber || row.email || row.code || 'Record'}</Link> : row.name || row.subscriptionNumber || row.invoiceNumber || row.email || row.code || 'Record'}{row.email && row.name && <small>{row.email}</small>}</>}
             {key === 'status' && <span className="badge">{resource === 'discounts' ? row.isActive ? 'Active' : 'Inactive' : row.status || row.accountStatus || row.role || '—'}</span>}
-            {key === 'amount' && formatAmount(row, resource)}
-            {key === 'details' && (row.customerName || row.description || row.companyName || row.planName || row.product?.name || row.type || '—')}
+              {key === 'amount' && formatAmount(row, resource)}
+            {['totalInvoiced','totalPaid','outstanding','activeRecurring'].includes(key) && <span className="tabular-nums">{formatCurrency(row[key] || 0)}</span>}
+            {key === 'activeSubscriptionCount' && row.activeSubscriptionCount}
+            {key === 'lastPaymentDate' && formatDate(row.lastPaymentDate)}
+            {key === 'assignedStaff' && (row.assignedStaff?.name || 'Unassigned')}
+            {key === 'details' && (resource === 'customers' ? [row.companyName, row.tags?.join(', ')].filter(Boolean).join(' · ') || '—' : row.customerName || row.description || row.companyName || row.planName || row.product?.name || row.type || '—')}
             {key === 'actions' && <>
               {resource === 'customers' && row._id ? <Link to={`/app/customers/${row._id}`}>Open customer</Link> : row._id && <button onClick={() => setModal({ detail: row })}>View details</button>}
-              {resource === 'products' && row._id && <button onClick={() => setModal({ editProduct: row })}>Edit</button>}
-              {resource === 'plans' && row._id && <button onClick={() => setModal({ editPlan: row })}>Edit</button>}
-              {resource === 'subscriptions' && row._id && <button onClick={() => setModal({ transition: row })}>Change status</button>}
-              {resource === 'subscriptions' && row._id && row.status === 'Active' && <button onClick={() => setModal({ planChange: row })}>Change plan</button>}
-              {resource === 'invoices' && row._id && !['Paid', 'Cancelled'].includes(row.status) && <button onClick={() => setModal({ invoiceStatus: row })}>Update status</button>}
+              {resource === 'products' && isAdmin && row._id && <button onClick={() => setModal({ editProduct: row })}>Edit</button>}
+              {resource === 'plans' && isAdmin && row._id && <button onClick={() => setModal({ editPlan: row })}>Edit</button>}
+              {resource === 'subscriptions' && isInternal && row._id && <button onClick={() => setModal({ transition: row })}>Change status</button>}
+              {resource === 'subscriptions' && isInternal && row._id && row.status === 'Active' && <button onClick={() => setModal({ planChange: row })}>Change plan</button>}
+              {resource === 'invoices' && isInternal && row._id && !['Paid', 'Cancelled'].includes(row.status) && <button onClick={() => setModal({ invoiceStatus: row })}>Update status</button>}
+              {resource === 'discounts' && isAdmin && row._id && <button disabled={discountStatus.isPending} onClick={() => discountStatus.mutate({ id: row._id, isActive: !row.isActive })}>{row.isActive ? 'Deactivate' : 'Activate'}</button>}
             </>}
             </td>)}
           </tr>)}
         </tbody></table></div>}
     </div>
+    {discountStatus.isError && <p className="error mt-3" role="alert">{discountStatus.error?.response?.data?.error || 'Unable to update discount status.'}</p>}
     {resource === 'customers' && (data?.total || 0) > (data?.pageSize || 50) && <div className="pagination-row"><span>Showing {((customerPage - 1) * data.pageSize) + 1}–{Math.min(customerPage * data.pageSize, data.total)} of {data.total}</span><div><button className="pagination-button" disabled={customerPage === 1} onClick={() => setCustomerPage((page) => page - 1)}>Previous</button><button className="pagination-button" disabled={customerPage * data.pageSize >= data.total} onClick={() => setCustomerPage((page) => page + 1)}>Next</button></div></div>}
     {modal === 'subscription' && <SubscriptionForm onClose={() => setModal(null)} />}
     {modal === 'customer' && <CustomerForm onClose={() => setModal(null)} />}
@@ -186,6 +211,12 @@ function formatAmount(row, resource) {
   if (resource === 'discounts') return row.discountType === 'fixed' ? formatCurrency(row.value) : `${Number(row.value || 0)}%`;
   const amount = resource === 'products' ? row.salesPrice : resource === 'plans' ? row.basePrice : row.grandTotal ?? row.recurringTotal ?? row.amount;
   return amount === undefined ? '—' : formatCurrency(amount);
+}
+
+function recordHref(resource, row) {
+  if (!row._id) return null;
+  const routes = { products: 'products', plans: 'plans', subscriptions: 'subscriptions', quotations: 'quotations', invoices: 'invoices', payments: 'payments' };
+  return routes[resource] ? `/app/${routes[resource]}/${row._id}` : null;
 }
 
 function readPreferences(key) { try { const result = JSON.parse(localStorage.getItem(key) || '{}'); return result && typeof result === 'object' ? result : {}; } catch { return {}; } }

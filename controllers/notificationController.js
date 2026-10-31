@@ -18,12 +18,12 @@ exports.listNotifications = async (req, res) => {
       ...overdueInvoices.map((invoice) => ({
         id: String(invoice._id), type: 'overdue', title: `${invoice.invoiceNumber} is overdue`,
         detail: `${invoice.customerName} · due ${new Date(invoice.dueDate).toLocaleDateString()}`,
-        date: invoice.dueDate, href: '/app/invoices'
+        date: invoice.dueDate, href: `/app/invoices/${invoice._id}`
       })),
       ...upcomingSubscriptions.map((subscription) => ({
         id: String(subscription._id), type: 'renewal', title: `${subscription.subscriptionNumber} renews soon`,
         detail: `${subscription.customerName} · ${subscription.planName}`,
-        date: subscription.nextBillingDate, href: '/app/subscriptions'
+        date: subscription.nextBillingDate, href: `/app/subscriptions/${subscription._id}`
       }))
     ].sort((a, b) => new Date(a.date) - new Date(b.date));
     res.json({ success: true, count: items.length, data: items });

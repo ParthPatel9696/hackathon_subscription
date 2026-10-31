@@ -8,6 +8,8 @@ import { useAuthStore } from '../store';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 
+const profileKeys = ['name', 'companyName', 'phone', 'alternatePhone', 'website', 'taxId', 'billingContactName', 'billingContactEmail', 'billingContactPhone', 'billingAddress', 'billingAddressLine2', 'billingCity', 'billingState', 'billingPostalCode', 'billingCountry', 'shippingAddress', 'preferredPaymentMethod'];
+
 export default function AccountPage() {
   const sessionUser = useAuthStore((state) => state.user);
   const setSession = useAuthStore((state) => state.setSession);
@@ -17,19 +19,20 @@ export default function AccountPage() {
   const customerMode = sessionUser?.role === 'customer';
   const [editing, setEditing] = useState(false);
   const [message, setMessage] = useState('');
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [closeAccountOpen, setCloseAccountOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', companyName: '', phone: '', billingAddress: '' });
+  const [form, setForm] = useState(Object.fromEntries(profileKeys.map((key) => [key, key === 'billingCountry' ? 'India' : ''])));
   const me = useQuery({
     queryKey: [customerMode ? 'customer-me' : 'me'],
     queryFn: async () => (await api.get(customerMode ? '/customers/me' : '/auth/me')).data
   });
-  const subscriptions = useQuery({ queryKey: ['subscriptions'], queryFn: async () => (await api.get('/subscriptions')).data });
-  const invoices = useQuery({ queryKey: ['invoices'], queryFn: async () => (await api.get('/invoices')).data });
-  const payments = useQuery({ queryKey: ['payments'], queryFn: async () => (await api.get('/payments')).data });
+  const subscriptions = useQuery({ queryKey: ['subscriptions'], queryFn: async () => (await api.get('/subscriptions')).data, enabled: customerMode });
+  const invoices = useQuery({ queryKey: ['invoices'], queryFn: async () => (await api.get('/invoices')).data, enabled: customerMode });
+  const payments = useQuery({ queryKey: ['payments'], queryFn: async () => (await api.get('/payments')).data, enabled: customerMode });
   const profile = customerMode ? me.data?.data?.customer : me.data?.user || sessionUser;
   useEffect(() => {
     if (!profile) return;
-    setForm({ name: profile.name || '', companyName: profile.companyName || '', phone: profile.phone || '', billingAddress: profile.billingAddress || '' });
+    setForm(Object.fromEntries(profileKeys.map((key) => [key, profile[key] || (key === 'billingCountry' ? 'India' : '')])));
   }, [profile]);
   const mutation = useMutation({
     mutationFn: async (payload) => (await api.patch('/customers/me', payload)).data.data,
@@ -42,6 +45,10 @@ export default function AccountPage() {
       setMessage('Your profile is saved and linked subscription records are up to date.');
       setEditing(false);
     }
+  });
+  const passwordMutation = useMutation({
+    mutationFn: async ({ currentPassword, newPassword }) => (await api.post('/auth/change-password', { currentPassword, newPassword })).data,
+    onSuccess: () => { clearSession(); queryClient.clear(); navigate('/login', { replace: true, state: { message: 'Password changed. Sign in again with your new password.' } }); }
   });
   const closeAccount = useMutation({
     mutationFn: async () => (await api.delete('/customers/me')).data,
@@ -59,12 +66,26 @@ export default function AccountPage() {
         <Field label="Full name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
         <Field label="Company" value={form.companyName} onChange={(event) => setForm({ ...form, companyName: event.target.value })} />
         <Field label="Phone" type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
-        <Field label="Billing address" className="sm:col-span-2"><textarea className="field min-h-20" value={form.billingAddress} onChange={(event) => setForm({ ...form, billingAddress: event.target.value })} /></Field>
+        <Field label="Alternate phone" type="tel" value={form.alternatePhone} onChange={(event) => setForm({ ...form, alternatePhone: event.target.value })} />
+        <Field label="Website" type="url" value={form.website} onChange={(event) => setForm({ ...form, website: event.target.value })} />
+        <Field label="Tax identification number" value={form.taxId} onChange={(event) => setForm({ ...form, taxId: event.target.value })} />
+        <Field label="Billing contact name" value={form.billingContactName} onChange={(event) => setForm({ ...form, billingContactName: event.target.value })} />
+        <Field label="Billing contact email" type="email" value={form.billingContactEmail} onChange={(event) => setForm({ ...form, billingContactEmail: event.target.value })} />
+        <Field label="Billing contact phone" type="tel" value={form.billingContactPhone} onChange={(event) => setForm({ ...form, billingContactPhone: event.target.value })} />
+        <Field label="Billing address line 1" className="sm:col-span-2"><textarea className="field min-h-16" value={form.billingAddress} onChange={(event) => setForm({ ...form, billingAddress: event.target.value })} /></Field>
+        <Field label="Billing address line 2" value={form.billingAddressLine2} onChange={(event) => setForm({ ...form, billingAddressLine2: event.target.value })} />
+        <Field label="City" value={form.billingCity} onChange={(event) => setForm({ ...form, billingCity: event.target.value })} />
+        <Field label="State" value={form.billingState} onChange={(event) => setForm({ ...form, billingState: event.target.value })} />
+        <Field label="PIN code" value={form.billingPostalCode} onChange={(event) => setForm({ ...form, billingPostalCode: event.target.value })} />
+        <Field label="Country" value={form.billingCountry} onChange={(event) => setForm({ ...form, billingCountry: event.target.value })} />
+        <Field label="Shipping address" className="sm:col-span-2"><textarea className="field min-h-16" value={form.shippingAddress} onChange={(event) => setForm({ ...form, shippingAddress: event.target.value })} /></Field>
+        <label className="grid gap-1.5 text-sm font-medium text-slate-700">Preferred payment method<select className="field" value={form.preferredPaymentMethod} onChange={(event) => setForm({ ...form, preferredPaymentMethod: event.target.value })}><option value="">Not specified</option>{['UPI','Bank transfer','Card','Cheque','Cash','Other'].map((method) => <option key={method}>{method}</option>)}</select></label>
         {mutation.isError && <p className="error sm:col-span-2" role="alert">{mutation.error?.response?.data?.error || 'Unable to update profile.'}</p>}
-        <div className="flex gap-2 sm:col-span-2"><button className="button" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : 'Save profile'}</button><button type="button" className="button secondary-button" onClick={() => { setEditing(false); setForm({ name: profile?.name || '', companyName: profile?.companyName || '', phone: profile?.phone || '', billingAddress: profile?.billingAddress || '' }); }}>Cancel</button></div>
-      </form> : <dl className="mt-4 grid gap-4 sm:grid-cols-2"><ProfileField label="Name" value={profile?.name} /><ProfileField label="Company" value={profile?.companyName} /><ProfileField label="Phone" value={profile?.phone} /><ProfileField label="Billing address" value={profile?.billingAddress} /></dl>}
+        <div className="flex gap-2 sm:col-span-2"><button className="button" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : 'Save profile'}</button><button type="button" className="button secondary-button" onClick={() => { setEditing(false); setForm(Object.fromEntries(profileKeys.map((key) => [key, profile?.[key] || (key === 'billingCountry' ? 'India' : '')]))); }}>Cancel</button></div>
+      </form> : <dl className="mt-4 grid gap-4 sm:grid-cols-2"><ProfileField label="Name" value={profile?.name} /><ProfileField label="Company" value={profile?.companyName} /><ProfileField label="Primary email" value={profile?.email} /><ProfileField label="Phone" value={profile?.phone} /><ProfileField label="Tax ID" value={profile?.taxId} /><ProfileField label="Billing contact" value={[profile?.billingContactName, profile?.billingContactEmail, profile?.billingContactPhone].filter(Boolean).join(' · ')} /><ProfileField label="Billing address" value={[profile?.billingAddress, profile?.billingAddressLine2, profile?.billingCity, profile?.billingState, profile?.billingPostalCode, profile?.billingCountry].filter(Boolean).join(', ')} /><ProfileField label="Shipping address" value={profile?.shippingAddress} /><ProfileField label="Preferred payment method" value={profile?.preferredPaymentMethod} /></dl>}
       {message && <p className="mt-4 text-sm text-emerald-700" role="status">{message}</p>}
     </section>
+    <section className="card mb-6"><h2 className="text-lg font-semibold">Password and security</h2><p className="mt-1 text-sm text-slate-500">Changing your password signs out other active sessions.</p><form className="mt-4 grid gap-4 sm:max-w-xl" onSubmit={(event) => { event.preventDefault(); if (passwordForm.newPassword !== passwordForm.confirmPassword) return; passwordMutation.mutate({ currentPassword: passwordForm.currentPassword, newPassword: passwordForm.newPassword }); }}><Field label="Current password" type="password" autoComplete="current-password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm({ ...passwordForm, currentPassword: event.target.value })} required /><Field label="New password" type="password" autoComplete="new-password" value={passwordForm.newPassword} onChange={(event) => setPasswordForm({ ...passwordForm, newPassword: event.target.value })} minLength={9} required /><Field label="Confirm new password" type="password" autoComplete="new-password" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm({ ...passwordForm, confirmPassword: event.target.value })} minLength={9} required />{passwordForm.confirmPassword && passwordForm.newPassword !== passwordForm.confirmPassword && <p className="error" role="alert">The passwords do not match.</p>}{passwordMutation.isError && <p className="error" role="alert">{passwordMutation.error?.response?.data?.error || 'Unable to change your password.'}</p>}<button className="button justify-self-start" disabled={passwordMutation.isPending || passwordForm.newPassword !== passwordForm.confirmPassword}>{passwordMutation.isPending ? 'Updating…' : 'Change password'}</button></form></section>
     {customerMode && <><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><SummaryCard icon={Wallet} label="Active subscriptions" value={active} /><SummaryCard icon={FileText} label="Invoices" value={invoices.data?.data?.length || 0} /><SummaryCard icon={CreditCard} label="Payments" value={payments.data?.data?.length || 0} /><SummaryCard icon={CreditCard} label="Outstanding balance" value={currency(outstanding)} /></div><p className="mt-5 text-xs text-slate-500">To protect your billing history, invoices and payments are managed as permanent records. Contact the Brightloop team if a financial record needs correction.</p><section className="card mt-6"><h2 className="font-semibold text-rose-800">Close account</h2><p className="mt-2 text-sm text-slate-500">You can close your account after active subscriptions have ended and invoices are paid. Your billing history remains available to Brightloop for account records.</p><button type="button" className="button danger-button mt-4" onClick={() => setCloseAccountOpen(true)}>Close my account</button></section></>}
     {closeAccountOpen && <Modal title="Close your Brightloop account?" onClose={() => setCloseAccountOpen(false)}><p className="text-sm text-slate-600">You will lose sign-in access immediately. Your billing history will remain linked to your customer record. Active subscriptions or unpaid invoices will prevent closure.</p>{closeAccount.isError && <p className="error mt-3" role="alert">{closeAccount.error?.response?.data?.error || 'Unable to close your account.'}</p>}<div className="mt-5 flex justify-end gap-2"><button className="button secondary-button" onClick={() => setCloseAccountOpen(false)}>Keep account</button><button className="button danger-button" disabled={closeAccount.isPending} onClick={() => closeAccount.mutate()}>{closeAccount.isPending ? 'Closing…' : 'Close account'}</button></div></Modal>}
   </>;

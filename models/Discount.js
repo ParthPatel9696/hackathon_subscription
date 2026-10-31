@@ -15,7 +15,7 @@ const discountSchema = new mongoose.Schema({
     enum: ['percentage', 'fixed'],
     required: true
   },
-  value: { type: Number, required: true, min: 0 }, // e.g. 15 (for 15%) or 500 (for $500)
+  value: { type: Number, required: true, min: 0 }, // e.g. 15 percent or INR 500 fixed amount
   minPurchaseAmount: { type: Number, default: 0, min: 0 },
   minQuantity: { type: Number, default: 0, min: 0 },
   startDate: { type: Date, default: Date.now },
