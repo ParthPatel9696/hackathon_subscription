@@ -43,6 +43,12 @@ app.get('/', (req, res) => {
 // API Routes
 app.use('/api', apiRoutes);
 
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  console.error(`[API ERROR] ${req.method} ${req.originalUrl}: ${err.message}`);
+  res.status(500).json({ success: false, error: 'The request could not be completed.' });
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -54,6 +60,9 @@ app.get('/health', (req, res) => {
 });
 
 const start = async () => {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    throw new Error('JWT_SECRET must be configured with at least 32 characters before starting Brightloop.');
+  }
   await connectDB();
   return app.listen(PORT, () => {
     console.log(`[Brightloop Server] Running on http://localhost:${PORT}`);

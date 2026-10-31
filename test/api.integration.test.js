@@ -1,8 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 const testUri = process.env.BRIGHTLOOP_INTEGRATION_DB;
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'brightloop-integration-test-secret';
+process.env.NODE_ENV = 'production';
 process.env.MONGODB_URI = testUri || process.env.MONGODB_URI;
 
 const mongoose = require('mongoose');
@@ -11,8 +13,10 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Plan = require('../models/Plan');
 const Invoice = require('../models/Invoice');
+const Subscription = require('../models/Subscription');
+const { runRecurringBilling } = require('../services/billingService');
 
-test('authenticated API enforces roles, scoped search, pricing, and payment balances', {
+test('Phase 1 backend workflows enforce roles, discounts, ownership, billing recovery, and reconciliation', {
   skip: !testUri && 'Set BRIGHTLOOP_INTEGRATION_DB to an isolated MongoDB test database URI.'
 }, async (t) => {
   await mongoose.connect(testUri);
@@ -39,14 +43,23 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
     return {
       status: response.status,
       data: await response.json(),
-      cookie: response.headers.get('set-cookie')?.split(';')[0]
+      cookie: response.headers.get('set-cookie')?.split(';')[0],
+      setCookie: response.headers.get('set-cookie')
     };
   };
 
   await User.create({ email: 'admin@test.invalid', password: 'Admin@TestPassword1!', name: 'Test Admin', role: 'admin' });
   const adminLogin = await request('/auth/login', { method: 'POST', body: { email: 'admin@test.invalid', password: 'Admin@TestPassword1!' } });
   assert.equal(adminLogin.status, 200);
+  assert.equal(Object.hasOwn(adminLogin.data, 'token'), false);
+  assert.match(adminLogin.setCookie, /HttpOnly/);
+  assert.match(adminLogin.setCookie, /SameSite=Lax/);
+  assert.match(adminLogin.setCookie, /Secure/);
   const adminCookie = adminLogin.cookie;
+  await User.create({ email: 'staff@test.invalid', password: 'Staff@TestPassword1!', name: 'Test Staff', role: 'staff' });
+  const staffLogin = await request('/auth/login', { method: 'POST', body: { email: 'staff@test.invalid', password: 'Staff@TestPassword1!' } });
+  assert.equal(staffLogin.status, 200);
+  const staffCookie = staffLogin.cookie;
 
   const registered = await request('/auth/register', { method: 'POST', body: {
     email: 'customer@test.invalid', password: 'Customer@TestPassword1!', name: 'Test Customer', companyName: 'Test Co', termsAccepted: true
@@ -71,6 +84,9 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
   assert.equal(archivedLogin.status, 401);
   const archivedDirectory = await request('/customers?status=Archived&search=managed', { cookie: adminCookie });
   assert.equal(archivedDirectory.data.data.some((customer) => customer._id === managedId), true);
+  assert.equal((await request('/customers', { cookie: staffCookie })).status, 200);
+  assert.equal((await request(`/customers/${managedId}`, { method: 'PATCH', cookie: staffCookie, body: { name: 'Forbidden' } })).status, 403);
+  assert.equal((await request('/discounts', { method: 'POST', cookie: staffCookie, body: { code: 'DENIED', name: 'Denied', discountType: 'percentage', value: 5 } })).status, 403);
 
   const closureUser = await request('/auth/register', { method: 'POST', body: {
     name: 'Closing Customer', email: 'closing@test.invalid', password: 'Closing@TestPassword1!', termsAccepted: true
@@ -80,9 +96,15 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
   assert.equal(closeOwnAccount.status, 200);
   const closedAccountRead = await request('/customers/me', { cookie: closureUser.cookie });
   assert.equal(closedAccountRead.status, 401);
+  const outsider = await request('/auth/register', { method: 'POST', body: {
+    name: 'Other Customer', email: 'other@test.invalid', password: 'Other@TestPassword1!', termsAccepted: true
+  } });
+  assert.equal(outsider.status, 201);
 
   const customerDirectory = await request('/customers', { cookie: customerCookie });
   assert.equal(customerDirectory.status, 403);
+  assert.equal((await request(`/customers/${managedId}`, { cookie: customerCookie })).status, 403);
+  assert.equal((await request('/auth/register', { method: 'POST', body: { name: 'No Terms', email: 'no-terms@test.invalid', password: 'NoTerms@TestPassword1!' } })).status, 400);
   const deniedProductWrite = await request('/products', { method: 'POST', cookie: customerCookie, body: { name: 'Denied', salesPrice: 1 } });
   assert.equal(deniedProductWrite.status, 403);
 
@@ -110,6 +132,90 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
   const subscription = subscriptionResponse.data.data;
   assert.equal(subscription.recurringTotal, 220);
   assert.equal(subscription.status, 'Draft');
+  const parallelQuotes = await Promise.all([1, 2].map(() => request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, lines: [{ productId, quantity: 1 }]
+  } })));
+  assert.equal(parallelQuotes.every((result) => result.status === 201), true);
+  assert.equal(new Set(parallelQuotes.map((result) => result.data.data.subscriptionNumber)).size, 2);
+
+  const percentageDiscount = await request('/discounts', { method: 'POST', cookie: adminCookie, body: {
+    code: 'SAVE10', name: 'Ten percent off', discountType: 'percentage', value: 10, minPurchaseAmount: 100,
+    minQuantity: 1, usageLimit: 1, appliesTo: 'all', startDate: new Date(Date.now() - 60_000), endDate: new Date(Date.now() + 86_400_000)
+  } });
+  assert.equal(percentageDiscount.status, 201);
+  const discountedQuotes = await Promise.all([1, 2].map(() => request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'SAVE10', lines: [{ productId, quantity: 1, discountAmount: 999 }]
+  } })));
+  assert.equal(discountedQuotes.filter((result) => result.status === 201).length, 1);
+  const discountedQuote = discountedQuotes.find((result) => result.status === 201);
+  assert.equal((await require('../models/Discount').findOne({ code: 'SAVE10' })).timesUsed, 1);
+  assert.equal(discountedQuote.data.data.discountTotal, 20);
+  assert.equal(discountedQuote.data.data.recurringTotal, 198);
+  assert.equal(discountedQuote.data.data.discountCode, 'SAVE10');
+  const exhaustedQuote = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'SAVE10', lines: [{ productId, quantity: 1 }]
+  } });
+  assert.equal(exhaustedQuote.status, 400);
+
+  const fixedDiscount = await request('/discounts', { method: 'POST', cookie: adminCookie, body: {
+    code: 'FIXED50', name: 'Fifty off target product', discountType: 'fixed', value: 50, minQuantity: 2,
+    usageLimit: 4, appliesTo: 'specific_product', targetProduct: productId,
+    startDate: new Date(Date.now() - 60_000), endDate: new Date(Date.now() + 86_400_000)
+  } });
+  assert.equal(fixedDiscount.status, 201);
+  const minimumFailure = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'FIXED50', lines: [{ productId, quantity: 1 }]
+  } });
+  assert.equal(minimumFailure.status, 400);
+  const fixedQuote = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'FIXED50', lines: [{ productId, quantity: 2 }]
+  } });
+  assert.equal(fixedQuote.status, 201);
+  assert.equal(fixedQuote.data.data.discountTotal, 50);
+  assert.equal(fixedQuote.data.data.recurringTotal, 385);
+
+  const inactiveDiscount = await request('/discounts', { method: 'POST', cookie: adminCookie, body: {
+    code: 'INACTIVE', name: 'Inactive promo', discountType: 'percentage', value: 5, usageLimit: 2,
+    isActive: false, startDate: new Date(Date.now() - 60_000), endDate: new Date(Date.now() + 86_400_000)
+  } });
+  assert.equal(inactiveDiscount.status, 201);
+  const inactiveQuote = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'INACTIVE', lines: [{ productId, quantity: 1 }]
+  } });
+  assert.equal(inactiveQuote.status, 400);
+  const enabledDiscount = await request(`/discounts/${inactiveDiscount.data.data._id}/status`, { method: 'PATCH', cookie: adminCookie, body: { isActive: true } });
+  assert.equal(enabledDiscount.status, 200);
+  const enabledQuote = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'INACTIVE', lines: [{ productId, quantity: 1 }]
+  } });
+  assert.equal(enabledQuote.status, 201);
+  assert.equal(enabledQuote.data.data.recurringTotal, 209);
+
+  const seatProductResponse = await request('/products', { method: 'POST', cookie: adminCookie, body: {
+    name: 'Integration Seats', type: 'seat', salesPrice: 30, costPrice: 5, taxRate: 0.1
+  } });
+  assert.equal(seatProductResponse.status, 201);
+  const seatDiscount = await request('/discounts', { method: 'POST', cookie: adminCookie, body: {
+    code: 'SEAT10', name: 'Seat discount', discountType: 'percentage', value: 10, minQuantity: 2,
+    usageLimit: 2, appliesTo: 'seats', startDate: new Date(Date.now() - 60_000), endDate: new Date(Date.now() + 86_400_000)
+  } });
+  assert.equal(seatDiscount.status, 201);
+  const seatQuote = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'SEAT10', lines: [{ productId, quantity: 1 }, { productId: seatProductResponse.data.data._id, quantity: 2 }]
+  } });
+  assert.equal(seatQuote.status, 201);
+  assert.equal(seatQuote.data.data.discountTotal, 6);
+  assert.equal(seatQuote.data.data.recurringTotal, 279.4);
+
+  const expiredDiscount = await request('/discounts', { method: 'POST', cookie: adminCookie, body: {
+    code: 'EXPIRED', name: 'Expired promo', discountType: 'fixed', value: 5, usageLimit: 1,
+    startDate: new Date(Date.now() - 86_400_000), endDate: new Date(Date.now() - 60_000)
+  } });
+  assert.equal(expiredDiscount.status, 201);
+  const expiredQuote = await request('/subscriptions', { method: 'POST', cookie: customerCookie, body: {
+    planId, discountCode: 'EXPIRED', lines: [{ productId, quantity: 1 }]
+  } });
+  assert.equal(expiredQuote.status, 400);
 
   const profileUpdate = await request('/customers/me', { method: 'PATCH', cookie: customerCookie, body: { name: 'Updated Customer', companyName: 'Updated Co', phone: '555-0111', billingAddress: '20 River Road' } });
   assert.equal(profileUpdate.status, 200);
@@ -136,12 +242,19 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
     grandTotal: 100, status: 'Confirmed'
   });
   const concurrentPayments = await Promise.all([
-    request('/payments', { method: 'POST', cookie: adminCookie, body: { invoiceId: invoice._id, amount: 60, method: 'Bank Transfer' } }),
-    request('/payments', { method: 'POST', cookie: adminCookie, body: { invoiceId: invoice._id, amount: 60, method: 'Bank Transfer' } })
+    request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 60, method: 'Bank Transfer' } }),
+    request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 60, method: 'Bank Transfer' } })
   ]);
   assert.equal(concurrentPayments.filter((result) => result.status === 201).length, 1);
   const afterConcurrent = await Invoice.findById(invoice._id);
   assert.equal(afterConcurrent.paidAmount, 60);
+  const excessivePayment = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 50, method: 'Bank Transfer' } });
+  assert.equal(excessivePayment.status, 400);
+
+  const referencedPayment = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 30, method: 'Bank Transfer', referenceNote: 'BANK-REC-1' } });
+  assert.equal(referencedPayment.status, 201);
+  const duplicateReference = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 1, method: 'Bank Transfer', referenceNote: ' bank-rec-1 ' } });
+  assert.equal(duplicateReference.status, 409);
 
   const draftInvoice = await Invoice.create({
     invoiceNumber: 'INT-INV-002', subscription: subscription._id, subscriptionNumber: subscription.subscriptionNumber,
@@ -149,13 +262,27 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
     invoiceDate: new Date(), dueDate: new Date(Date.now() + 86400000), lines: [], subtotal: 10, taxTotal: 0,
     grandTotal: 10, status: 'Draft'
   });
-  const draftPayment = await request('/payments', { method: 'POST', cookie: adminCookie, body: { invoiceId: draftInvoice._id, amount: 5, method: 'Bank Transfer' } });
+  const draftPayment = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: draftInvoice._id, amount: 5, method: 'Bank Transfer' } });
   assert.equal(draftPayment.status, 400);
+  const unsupportedMethod = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 1, method: 'Cash' } });
+  assert.equal(unsupportedMethod.status, 400);
+  const ownInvoices = await request(`/invoices?customerId=${managedId}`, { cookie: customerCookie });
+  assert.equal(ownInvoices.status, 200);
+  assert.equal(ownInvoices.data.data.length, 2);
+  assert.equal(ownInvoices.data.data.every((item) => item.customer.toString() === registeredUser._id.toString()), true);
+  const outsiderInvoices = await request('/invoices', { cookie: outsider.cookie });
+  const outsiderPayments = await request('/payments', { cookie: outsider.cookie });
+  const outsiderSubscriptions = await request('/subscriptions', { cookie: outsider.cookie });
+  assert.equal(outsiderInvoices.data.count, 0);
+  assert.equal(outsiderPayments.data.count, 0);
+  assert.equal(outsiderSubscriptions.data.count, 0);
+  assert.equal((await request(`/subscriptions/${subscription._id}`, { cookie: outsider.cookie })).status, 403);
 
-  const finalPayment = await request('/payments', { method: 'POST', cookie: adminCookie, body: { invoiceId: invoice._id, amount: 40, method: 'Bank Transfer' } });
+  const finalPayment = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: invoice._id, amount: 10, method: 'Bank Transfer' } });
   assert.equal(finalPayment.status, 201);
   assert.equal(finalPayment.data.invoice.status, 'Paid');
   assert.equal(finalPayment.data.invoice.paidAmount, 100);
+  assert.equal((await request(`/invoices/${invoice._id}/status`, { method: 'PATCH', cookie: staffCookie, body: { status: 'Confirmed' } })).status, 400);
 
   for (const targetStatus of ['Quotation', 'Confirmed', 'Active']) {
     const transition = await request('/subscriptions/transition', { method: 'POST', cookie: adminCookie, body: { id: subscription._id, targetStatus } });
@@ -165,4 +292,99 @@ test('authenticated API enforces roles, scoped search, pricing, and payment bala
   assert.equal(blockedArchive.status, 409);
   const blockedSelfClose = await request('/customers/me', { method: 'DELETE', cookie: customerCookie });
   assert.equal(blockedSelfClose.status, 409);
+  assert.equal((await request('/subscriptions/transition', { method: 'POST', cookie: staffCookie, body: { id: subscription._id, targetStatus: 'Draft' } })).status, 400);
+
+  const recoveryInvoice = await Invoice.create({
+    invoiceNumber: 'INT-INV-RECOVERY', subscription: subscription._id, subscriptionNumber: subscription.subscriptionNumber,
+    customer: registeredUser._id, customerName: 'Updated Co', customerEmail: registeredUser.email,
+    invoiceDate: new Date(), dueDate: new Date(Date.now() + 86400000), lines: [], subtotal: 50, taxTotal: 0,
+    grandTotal: 50, status: 'Confirmed'
+  });
+  const originalPaymentUpdate = require('../models/Payment').findOneAndUpdate;
+  let failPosting = true;
+  require('../models/Payment').findOneAndUpdate = async function (...args) {
+    if (failPosting) { failPosting = false; throw new Error('injected payment posting failure'); }
+    return originalPaymentUpdate.apply(this, args);
+  };
+  try {
+    const partialCommit = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: recoveryInvoice._id, amount: 20, method: 'Bank Transfer', referenceNote: 'RECOVERY-1' } });
+    assert.equal(partialCommit.status, 500);
+  } finally { require('../models/Payment').findOneAndUpdate = originalPaymentUpdate; }
+  const recoveredPayment = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: recoveryInvoice._id, amount: 20, method: 'Bank Transfer', referenceNote: 'RECOVERY-1' } });
+  assert.equal(recoveredPayment.status, 201);
+  assert.equal(recoveredPayment.data.payment.referenceNote, 'RECOVERY-1');
+  assert.equal((await Invoice.findById(recoveryInvoice._id)).paidAmount, 20);
+  const nextRecoveryPayment = await request('/payments', { method: 'POST', cookie: staffCookie, body: { invoiceId: recoveryInvoice._id, amount: 10, method: 'Bank Transfer', referenceNote: 'RECOVERY-2' } });
+  assert.equal(nextRecoveryPayment.status, 201);
+  assert.equal((await Invoice.findById(recoveryInvoice._id)).paidAmount, 30);
+  assert.equal(await require('../models/Payment').countDocuments({ invoice: recoveryInvoice._id, status: 'pending' }), 0);
+
+  await Subscription.updateOne({ _id: subscription._id }, { $set: {
+    startDate: new Date('2025-12-02T00:00:00.000Z'), lastInvoicedDate: null,
+    nextBillingDate: new Date('2026-01-02T00:00:00.000Z')
+  } });
+  const billingNow = new Date('2026-01-03T00:00:00.000Z');
+  const billingRace = await Promise.all([
+    runRecurringBilling({ actorRole: 'staff', now: billingNow }),
+    runRecurringBilling({ actorRole: 'staff', now: billingNow })
+  ]);
+  const periodQuery = { subscription: subscription._id, billingPeriodStart: new Date('2025-12-02T00:00:00.000Z'), billingPeriodEnd: new Date('2026-01-02T00:00:00.000Z') };
+  assert.equal(await Invoice.countDocuments(periodQuery), 1);
+  assert.equal(billingRace.reduce((sum, result) => sum + result.createdInvoices.length, 0), 1);
+  const duplicateBilling = await runRecurringBilling({ actorRole: 'staff', now: billingNow });
+  assert.equal(duplicateBilling.createdInvoices.length, 0);
+  assert.equal(await Invoice.countDocuments(periodQuery), 1);
+  const afterFirstCycle = await Subscription.findById(subscription._id);
+  assert.equal(afterFirstCycle.lastInvoicedDate.toISOString(), '2026-01-02T00:00:00.000Z');
+  assert.equal(afterFirstCycle.nextBillingDate.toISOString(), '2026-02-02T00:00:00.000Z');
+
+  const originalUpdateOne = Subscription.updateOne;
+  let failScheduleWrite = true;
+  Subscription.updateOne = async function (...args) {
+    if (failScheduleWrite) { failScheduleWrite = false; throw new Error('injected schedule write failure'); }
+    return originalUpdateOne.apply(this, args);
+  };
+  try {
+    await assert.rejects(runRecurringBilling({ actorRole: 'staff', now: new Date('2026-02-03T00:00:00.000Z'), useTransactions: false }), /injected schedule write failure/);
+  } finally { Subscription.updateOne = originalUpdateOne; }
+  const partialPeriod = { subscription: subscription._id, billingPeriodStart: new Date('2026-01-02T00:00:00.000Z'), billingPeriodEnd: new Date('2026-02-02T00:00:00.000Z') };
+  assert.equal(await Invoice.countDocuments(partialPeriod), 1);
+  const recoveredRun = await runRecurringBilling({ actorRole: 'staff', now: new Date('2026-02-03T00:00:00.000Z'), useTransactions: false });
+  assert.equal(recoveredRun.recoveredSubscriptions.length, 1);
+  assert.equal(await Invoice.countDocuments(partialPeriod), 1);
+
+  const beforeFailedInvoice = await Subscription.findById(subscription._id);
+  const originalCreate = Invoice.create;
+  Invoice.create = async function () { throw new Error('injected invoice creation failure'); };
+  try {
+    await assert.rejects(runRecurringBilling({ actorRole: 'staff', now: new Date('2026-04-03T00:00:00.000Z'), useTransactions: false }), /injected invoice creation failure/);
+  } finally { Invoice.create = originalCreate; }
+  const afterFailedInvoice = await Subscription.findById(subscription._id);
+  assert.equal(afterFailedInvoice.nextBillingDate.toISOString(), beforeFailedInvoice.nextBillingDate.toISOString());
+  const retriedInvoiceRun = await runRecurringBilling({ actorRole: 'staff', now: new Date('2026-04-03T00:00:00.000Z'), useTransactions: false });
+  assert.equal(retriedInvoiceRun.createdInvoices.length, 1);
+
+  const forgottenExisting = await request('/auth/forgot-password', { method: 'POST', body: { email: 'customer@test.invalid' } });
+  const forgottenUnknown = await request('/auth/forgot-password', { method: 'POST', body: { email: 'missing@test.invalid' } });
+  assert.equal(forgottenExisting.data.message, forgottenUnknown.data.message);
+  assert.equal(Object.hasOwn(forgottenExisting.data, 'simulatedResetUrl'), false);
+  const resetToken = 'phase-one-reset-verification-token';
+  registeredUser.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  registeredUser.resetPasswordExpires = new Date(Date.now() + 60_000);
+  await registeredUser.save();
+  const resetResponse = await request('/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Changed@TestPassword1!' } });
+  assert.equal(resetResponse.status, 200);
+  assert.equal((await request('/auth/me', { cookie: customerCookie })).status, 401);
+  assert.equal((await request('/auth/login', { method: 'POST', body: { email: 'customer@test.invalid', password: 'Changed@TestPassword1!' } })).status, 200);
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const deniedLogin = await request('/auth/login', { method: 'POST', body: { email: 'admin@test.invalid', password: 'wrong-password' } });
+    assert.equal(deniedLogin.status, 401);
+  }
+  const throttledLogin = await request('/auth/login', { method: 'POST', body: { email: 'admin@test.invalid', password: 'wrong-password' } });
+  assert.equal(throttledLogin.status, 429);
+  const loggedOut = await request('/auth/logout', { method: 'POST', cookie: adminCookie });
+  assert.equal(loggedOut.status, 200);
+  const revokedSession = await request('/auth/me', { cookie: adminCookie });
+  assert.equal(revokedSession.status, 401);
 });

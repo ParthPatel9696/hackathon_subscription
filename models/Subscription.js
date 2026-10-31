@@ -11,7 +11,9 @@ const subscriptionLineSchema = new mongoose.Schema({
   variantPriceExtra: { type: Number, default: 0 },
   quantity: { type: Number, required: true, default: 1, min: 1 },
   unitPrice: { type: Number, required: true, min: 0 },
-  taxRate: { type: Number, default: 0.10 }, // 10%
+  taxRate: { type: Number, default: 0 },
+  taxLabel: { type: String, default: '' },
+  taxComponents: [{ label: String, rate: Number }],
   taxAmount: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
   unitPriceMinor: { type: Number, min: 0 },
@@ -22,6 +24,53 @@ const subscriptionLineSchema = new mongoose.Schema({
   lineTotal: { type: Number, required: true }
 }, { _id: true });
 
+const scheduledPlanChangeSchema = new mongoose.Schema({
+  plan: { type: mongoose.Schema.Types.ObjectId, ref: 'Plan', required: true },
+  planName: { type: String, required: true },
+  quantity: { type: Number, required: true, min: 1 },
+  billingFrequency: { type: String, enum: ['daily', 'weekly', 'monthly', 'yearly'], required: true },
+  recurringTotalMinor: { type: Number, required: true, min: 0 },
+  subtotalMinor: { type: Number, required: true, min: 0 },
+  taxTotalMinor: { type: Number, required: true, min: 0 },
+  discountTotalMinor: { type: Number, required: true, min: 0 },
+  line: { type: mongoose.Schema.Types.Mixed, required: true },
+  effectiveAt: { type: Date, required: true },
+  prorationMinor: { type: Number, required: true },
+  reason: { type: String, default: '' },
+  operationKey: { type: String, required: true },
+  requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+}, { _id: false });
+
+const planChangeHistorySchema = new mongoose.Schema({
+  previousPlan: String,
+  newPlan: String,
+  previousRecurringMinor: Number,
+  newRecurringMinor: Number,
+  previousNetRecurringMinor: Number,
+  newNetRecurringMinor: Number,
+  previousQuantity: Number,
+  newQuantity: Number,
+  prorationMinor: Number,
+  effectiveAt: Date,
+  changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reason: String,
+  operationKey: String,
+  createdAt: { type: Date, default: Date.now }
+}, { _id: true });
+
+const subscriptionStatusEventSchema = new mongoose.Schema({
+  eventType: { type: String, enum: ['created', 'status_change', 'plan_change'], required: true },
+  status: { type: String, required: true },
+  previousStatus: { type: String, default: null },
+  netRecurringMinor: { type: Number, min: 0, default: 0 },
+  previousNetRecurringMinor: { type: Number, min: 0, default: null },
+  billingFrequency: { type: String, enum: ['daily', 'weekly', 'monthly', 'yearly'], default: 'monthly' },
+  previousBillingFrequency: { type: String, enum: ['daily', 'weekly', 'monthly', 'yearly', null], default: null },
+  effectiveAt: { type: Date, default: Date.now },
+  actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reason: { type: String, default: '' }
+}, { _id: true });
+
 const subscriptionSchema = new mongoose.Schema({
   subscriptionNumber: {
     type: String,
@@ -29,6 +78,7 @@ const subscriptionSchema = new mongoose.Schema({
     unique: true,
     uppercase: true
   },
+  currency: { type: String, enum: ['INR'], default: 'INR' },
   customer: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -61,6 +111,11 @@ const subscriptionSchema = new mongoose.Schema({
   subtotalMinor: { type: Number, min: 0 },
   taxTotalMinor: { type: Number, min: 0, default: 0 },
   discountTotalMinor: { type: Number, min: 0, default: 0 },
+  discount: { type: mongoose.Schema.Types.ObjectId, ref: 'Discount', default: null },
+  discountCode: { type: String, default: '' },
+  discountName: { type: String, default: '' },
+  discountType: { type: String, enum: ['percentage', 'fixed', null], default: null },
+  discountValue: { type: Number, min: 0, default: 0 },
   recurringTotalMinor: { type: Number, min: 0 },
   recurringTotal: { type: Number, required: true },
   status: {
@@ -71,7 +126,13 @@ const subscriptionSchema = new mongoose.Schema({
   quotationValidUntil: { type: Date },
   lastInvoicedDate: { type: Date },
   notes: { type: String, default: '' },
+  scheduledPlanChange: { type: scheduledPlanChangeSchema, default: null },
+  planChangeHistory: { type: [planChangeHistorySchema], default: [] },
+  statusHistory: { type: [subscriptionStatusEventSchema], default: [] },
+  closedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
 });
+
+subscriptionSchema.index({ 'scheduledPlanChange.operationKey': 1 }, { unique: true, partialFilterExpression: { 'scheduledPlanChange.operationKey': { $type: 'string' } } });
 
 module.exports = mongoose.model('Subscription', subscriptionSchema);

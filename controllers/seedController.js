@@ -50,7 +50,7 @@ exports.seedDatabase = async (req, res) => {
       companyName: 'Apex Global Corp'
     });
 
-    // 2. Seed Products with Variants (Brand: Odoo adds $60)
+    // 2. Seed Products with Variants (Brand: Odoo adds â‚¹60)
     const erpProduct = await Product.create({
       name: 'Brightloop Core ERP Suite',
       type: 'software',
@@ -66,7 +66,7 @@ exports.seedDatabase = async (req, res) => {
           ]
         }
       ],
-      taxRate: 0.10
+      taxRate: 0
     });
 
     const seatProduct = await Product.create({
@@ -75,7 +75,7 @@ exports.seedDatabase = async (req, res) => {
       salesPrice: 25,
       costPrice: 5,
       notes: 'Monthly license per active user seat.',
-      taxRate: 0.10
+      taxRate: 0
     });
 
     const analyticsProduct = await Product.create({
@@ -84,7 +84,7 @@ exports.seedDatabase = async (req, res) => {
       salesPrice: 15,
       costPrice: 2,
       notes: 'Real-time forecasts and executive reports.',
-      taxRate: 0.10
+      taxRate: 0
     });
 
     const supportProduct = await Product.create({
@@ -93,7 +93,7 @@ exports.seedDatabase = async (req, res) => {
       salesPrice: 25,
       costPrice: 10,
       notes: '1-hour guaranteed SLA and dedicated account manager.',
-      taxRate: 0.10
+      taxRate: 0
     });
 
     // 3. Seed Plans
@@ -143,7 +143,7 @@ exports.seedDatabase = async (req, res) => {
 
     await Discount.create({
       code: 'SCALEUP500',
-      name: '$500 Fixed Annual Rebate',
+      name: 'â‚¹500 Fixed Annual Rebate',
       discountType: 'fixed',
       value: 500,
       minPurchaseAmount: 3000,
@@ -184,11 +184,11 @@ exports.seedDatabase = async (req, res) => {
         {
           product: erpProduct._id,
           productName: 'Brightloop Core ERP Suite',
-          variantName: 'Odoo Brand Edition (+ $60.00)',
+          variantName: 'Odoo Brand Edition (+ â‚¹60.00)',
           variantPriceExtra: 60,
           quantity: 1,
           unitPrice: 1500,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 156,
           discountAmount: 234, // 15% discount
           lineTotal: 1482
@@ -199,7 +199,7 @@ exports.seedDatabase = async (req, res) => {
           variantName: 'Standard',
           quantity: 10,
           unitPrice: 25,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 25,
           discountAmount: 0,
           lineTotal: 275
@@ -232,7 +232,7 @@ exports.seedDatabase = async (req, res) => {
           variantName: 'Standard Edition',
           quantity: 1,
           unitPrice: 5400,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 540,
           discountAmount: 500,
           lineTotal: 5440
@@ -265,7 +265,7 @@ exports.seedDatabase = async (req, res) => {
           productName: 'Starter Cloud Package',
           quantity: 1,
           unitPrice: 89,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 8.9,
           discountAmount: 0,
           lineTotal: 97.9
@@ -312,7 +312,7 @@ exports.seedDatabase = async (req, res) => {
           productName: 'Brightloop Core ERP Suite (Odoo Brand)',
           quantity: 1,
           unitPrice: 1560,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 156,
           discountAmount: 234,
           total: 1482
@@ -321,7 +321,7 @@ exports.seedDatabase = async (req, res) => {
           productName: 'Additional User Seats (x10)',
           quantity: 10,
           unitPrice: 25,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 25,
           discountAmount: 0,
           total: 275
@@ -360,7 +360,7 @@ exports.seedDatabase = async (req, res) => {
           productName: 'Enterprise Cloud Suite',
           quantity: 1,
           unitPrice: 2227,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 223,
           discountAmount: 0,
           total: 2450
@@ -390,7 +390,7 @@ exports.seedDatabase = async (req, res) => {
           productName: 'Starter Cloud Package + Support',
           quantity: 1,
           unitPrice: 450,
-          taxRate: 0.10,
+          taxRate: 0,
           taxAmount: 45,
           discountAmount: 0,
           total: 495

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CreditCard, FileText, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
+import { formatCurrency } from '../utils/locale';
 import { useAuthStore } from '../store';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
@@ -72,4 +73,4 @@ export default function AccountPage() {
 function Field({ label, children, ...props }) { return <label className="grid gap-1.5 text-sm font-medium text-slate-700">{label}{children || <input className="field" {...props} />}</label>; }
 function ProfileField({ label, value }) { return <div><dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 text-sm text-slate-800">{value || 'Not provided'}</dd></div>; }
 function SummaryCard({ icon: Icon, label, value }) { return <div className="card flex items-center gap-4"><div className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Icon aria-hidden="true" size={21} /></div><div><p className="text-sm text-slate-500">{label}</p><p className="mt-1 text-xl font-bold">{value}</p></div></div>; }
-function currency(amount) { return `$${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function currency(amount) { return formatCurrency(amount); }

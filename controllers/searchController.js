@@ -35,9 +35,9 @@ exports.search = async (req, res) => {
       ...users.map((item) => ({ type: 'Customer', id: item._id, title: item.companyName || item.name, subtitle: item.email, href: `/app/customers/${item._id}` })),
       ...products.map((item) => ({ type: 'Product', id: item._id, title: item.name, subtitle: item.type, href: isInternal ? '/app/products' : '/app/plans' })),
       ...plans.map((item) => ({ type: 'Plan', id: item._id, title: item.name, subtitle: `${item.code} · ${item.billingFrequency}`, href: '/app/plans' })),
-      ...subscriptions.map((item) => ({ type: 'Subscription', id: item._id, title: item.subscriptionNumber, subtitle: `${item.customerName} · ${item.planName} · ${item.status}`, href: '/app/subscriptions' })),
-      ...invoices.map((item) => ({ type: 'Invoice', id: item._id, title: item.invoiceNumber, subtitle: `${item.customerName} · ${item.status}`, href: '/app/invoices' })),
-      ...payments.map((item) => ({ type: 'Payment', id: item._id, title: item.invoiceNumber, subtitle: `${item.method} · ${item.referenceNote || 'Payment record'}`, href: '/app/payments' }))
+      ...subscriptions.map((item) => ({ type: item.status === 'Quotation' ? 'Quotation' : 'Subscription', id: item._id, title: item.subscriptionNumber, subtitle: `${item.customerName} · ${item.planName} · ${item.status}`, href: `/app/subscriptions/${item._id}` })),
+      ...invoices.map((item) => ({ type: 'Invoice', id: item._id, title: item.invoiceNumber, subtitle: `${item.customerName} · ${item.status}`, href: `/app/invoices?search=${encodeURIComponent(item.invoiceNumber)}` })),
+      ...payments.map((item) => ({ type: 'Payment', id: item._id, title: item.invoiceNumber, subtitle: `${item.method} · ${item.referenceNote || 'Payment record'}`, href: `/app/payments?search=${encodeURIComponent(item.invoiceNumber)}` }))
     ].slice(0, 20);
     res.json({ success: true, data: results });
   } catch (err) {

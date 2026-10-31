@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { sendPasswordReset } = require('../services/mailer');
 const User = require('../models/User');
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -19,7 +20,7 @@ const setAuthCookie = (res, token) => {
 
 const generateToken = (user) => {
   return jwt.sign(
-    { id: user._id, email: user.email, role: user.role, name: user.name },
+    { id: user._id, email: user.email, role: user.role, name: user.name, sessionVersion: user.sessionVersion || 0 },
     getJwtSecret(),
     { expiresIn: '7d' }
   );
@@ -65,7 +66,7 @@ exports.register = async (req, res) => {
       });
     }
 
-    if (termsAccepted === false) {
+    if (termsAccepted !== true) {
       return res.status(400).json({ success: false, error: 'You must accept the terms to create an account.' });
     }
 
@@ -87,7 +88,6 @@ exports.register = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Account created successfully! Welcome to Brightloop.',
-      token,
       user: {
         id: newUser._id,
         email: newUser.email,
@@ -99,7 +99,8 @@ exports.register = async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    if (err.code === 11000) return res.status(409).json({ success: false, error: 'Unable to create an account with those details.' });
+    res.status(err.name === 'ValidationError' ? 400 : 500).json({ success: false, error: err.name === 'ValidationError' ? err.message : 'Unable to create your account.' });
   }
 };
 
@@ -138,7 +139,6 @@ exports.login = async (req, res) => {
     res.json({
       success: true,
       message: `Welcome back, ${user.name}!`,
-      token,
       user: {
         id: user._id,
         email: user.email,
@@ -150,7 +150,7 @@ exports.login = async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to sign in right now.' });
   }
 };
 
@@ -170,15 +170,16 @@ exports.getMe = async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to load your account.' });
   }
 };
 
 // POST /api/auth/forgot-password (Page 2: "reset link should arrive at their registered email")
 exports.forgotPassword = async (req, res) => {
   try {
-    const { email } = req.body;
-    const user = await User.findOne({ email: email?.toLowerCase() });
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
+    const user = await User.findOne({ email });
 
     if (!user) {
       // Don't leak user existence in production, but confirm email check
@@ -195,16 +196,23 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save();
 
-    // In a production app, nodemailer sends email. In hackathon mode, provide the simulated link:
     const resetUrl = `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/reset-password?token=${resetToken}`;
+    let emailSent = false;
+    try { emailSent = await sendPasswordReset({ to: user.email, url: resetUrl }); }
+    catch (mailError) {
+      user.resetPasswordToken = null;
+      user.resetPasswordExpires = null;
+      await user.save();
+      throw mailError;
+    }
     const response = {
       success: true,
       message: 'If an account exists with this email, password reset instructions have been sent.'
     };
-    if (process.env.NODE_ENV !== 'production') response.simulatedResetUrl = resetUrl;
+    if (!emailSent && process.env.NODE_ENV !== 'production') response.simulatedResetUrl = resetUrl;
     res.json(response);
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to request password reset right now.' });
   }
 };
 
@@ -239,19 +247,26 @@ exports.resetPassword = async (req, res) => {
     }
 
     user.password = password;
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
     user.resetPasswordToken = null;
     user.resetPasswordExpires = null;
     await user.save();
 
     res.json({ success: true, message: 'Password reset successfully. Please sign in again.' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to reset your password right now.' });
   }
 };
 
-// JWTs are stateless; the client removes its token on logout.
-exports.logout = (req, res) => {
-  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+// Incrementing the user's session version revokes the cookie JWT on the next request.
+exports.logout = async (req, res) => {
+  try {
+    await User.updateOne({ _id: req.user._id }, { $inc: { sessionVersion: 1 } });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Unable to end this session. Please try again.' });
+  }
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
   res.json({ success: true, message: 'Signed out successfully.' });
 };
 
@@ -310,6 +325,7 @@ exports.addStaff = async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    if (err.code === 11000) return res.status(409).json({ success: false, error: 'A user already uses that email address.' });
+    res.status(500).json({ success: false, error: 'Unable to add staff member.' });
   }
 };

@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const paymentSchema = new mongoose.Schema({
+  currency: { type: String, enum: ['INR'], default: 'INR' },
   invoice: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Invoice',
@@ -16,11 +17,17 @@ const paymentSchema = new mongoose.Schema({
   },
   paymentDate: { type: Date, default: Date.now },
   referenceNote: { type: String, default: '' },
+  referenceKey: { type: String, default: undefined },
+  status: { type: String, enum: ['pending', 'posted'], default: 'posted' },
+  balanceBeforeMinor: { type: Number, min: 0 },
+  balanceAfterMinor: { type: Number, min: 0 },
   recordedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
   createdAt: { type: Date, default: Date.now }
 });
+
+paymentSchema.index({ invoice: 1, referenceKey: 1 }, { unique: true, partialFilterExpression: { referenceKey: { $type: 'string' } } });
 
 module.exports = mongoose.model('Payment', paymentSchema);

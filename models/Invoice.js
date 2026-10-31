@@ -5,7 +5,9 @@ const invoiceLineSchema = new mongoose.Schema({
   variantName: { type: String, default: '' },
   quantity: { type: Number, required: true },
   unitPrice: { type: Number, required: true },
-  taxRate: { type: Number, default: 0.10 },
+  taxRate: { type: Number, default: 0 },
+  taxLabel: { type: String, default: '' },
+  taxComponents: [{ label: String, rate: Number }],
   taxAmount: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
   unitPriceMinor: { type: Number, min: 0 },
@@ -22,6 +24,7 @@ const invoiceSchema = new mongoose.Schema({
     unique: true,
     uppercase: true
   },
+  currency: { type: String, enum: ['INR'], default: 'INR' },
   subscription: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Subscription',
@@ -50,6 +53,8 @@ const invoiceSchema = new mongoose.Schema({
   grandTotal: { type: Number, required: true },
   paidAmountMinor: { type: Number, min: 0, default: 0 },
   paidAmount: { type: Number, default: 0 },
+  paymentLockId: { type: String, default: null, select: false },
+  paymentLockExpiresAt: { type: Date, default: null, select: false },
   status: {
     type: String,
     enum: ['Draft', 'Confirmed', 'Paid', 'Overdue', 'Cancelled'],

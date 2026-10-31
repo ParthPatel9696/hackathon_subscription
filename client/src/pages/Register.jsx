@@ -21,7 +21,7 @@ export default function Register() {
     try {
       const { confirmPassword, ...payload } = form;
       const { data } = await api.post('/auth/register', payload);
-      setSession(data.user, data.token);
+      setSession(data.user);
       queryClient.setQueryData(['current-user'], data.user);
       navigate('/app/dashboard', { replace: true });
     } catch (err) { setError(err.response?.data?.error || 'Unable to create your account. Please try again.'); }

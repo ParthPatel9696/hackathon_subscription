@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BarChart3, Bell, ChevronsLeft, ChevronsRight, CreditCard, FileText, LayoutDashboard, LogOut, Menu, Moon, Package, Percent, Search, Settings, Sun, Tags, Users, Wallet, X } from 'lucide-react';
+import { ArrowRight, BarChart3, Bell, CalendarDays, ChevronsLeft, ChevronsRight, CreditCard, FileText, HeartPulse, LayoutDashboard, LogOut, Menu, Moon, Package, Percent, Search, Settings, Sun, Tags, Users, Wallet, X } from 'lucide-react';
 import api from '../api';
 import { useAuthStore } from '../store';
 
@@ -15,6 +15,9 @@ const sections = [
   { title: 'Finance', links: [
     ['/app/invoices', 'Invoices', FileText, ['admin', 'staff', 'customer']], ['/app/payments', 'Payments', CreditCard, ['admin', 'staff', 'customer']],
     ['/app/discounts', 'Discounts', Percent, ['admin']], ['/app/reports', 'Reports', BarChart3, ['admin', 'staff']]
+  ] },
+  { title: 'Operations', links: [
+    ['/app/billing-calendar', 'Billing Calendar', CalendarDays, ['admin', 'staff']], ['/app/subscription-health', 'Subscription Health', HeartPulse, ['admin', 'staff']], ['/app/revenue-analytics', 'Revenue Intelligence', BarChart3, ['admin', 'staff']]
   ] },
   { title: 'System', links: [['/app/settings', 'Settings', Settings, ['admin', 'staff', 'customer']]] }
 ];
@@ -85,13 +88,28 @@ export default function Shell() {
     localStorage.setItem('brightloop_sidebar', value ? 'expanded' : 'collapsed');
     return !value;
   });
-  const commands = sections.flatMap((section) => section.links
+  const navigationCommands = sections.flatMap((section) => section.links
     .filter(([, , , roles]) => roles.includes(user?.role))
     .map(([href, label, Icon]) => ({ href, title: label, subtitle: section.title, Icon, type: 'Page' })));
-  const searchResults = searchTerm.trim().length >= 2 ? (searchTerm.trim() === debouncedSearch ? (searchQuery.data?.data || []) : []) : commands
-    .filter((item) => `${item.title} ${item.subtitle}`.toLowerCase().includes(searchTerm.trim().toLowerCase())).slice(0, 7);
+  const actionCommands = [
+    ...(user?.role === 'admin' ? [{ href: '/app/customers?action=create', title: 'Create customer', subtitle: 'Add a customer account', Icon: Users, type: 'Action' }, { href: '/app/products?action=create', title: 'Create product', subtitle: 'Add a catalog product', Icon: Package, type: 'Action' }, { href: '/app/plans?action=create', title: 'Create plan', subtitle: 'Add a subscription plan', Icon: Tags, type: 'Action' }] : []),
+    ...(['admin', 'staff'].includes(user?.role) ? [{ href: '/app/subscriptions?action=create', title: 'Create quotation', subtitle: 'Start a subscription quote', Icon: FileText, type: 'Action' }, { href: '/app/payments?action=create', title: 'Record payment', subtitle: 'Apply a payment to an invoice', Icon: CreditCard, type: 'Action' }] : []),
+    ...(user?.role === 'customer' ? [{ href: '/app/plans', title: 'Browse plans', subtitle: 'Explore available subscriptions', Icon: Tags, type: 'Action' }] : [])
+  ];
+  const recentCommands = readRecent(user?.id).slice(0, 5).map((item) => ({ ...item, type: 'Recent' }));
+  const localCommands = [...(searchTerm.trim() ? [] : recentCommands), ...navigationCommands, ...actionCommands]
+    .filter((item) => !searchTerm.trim() || `${item.title} ${item.subtitle}`.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+  const recordResults = searchTerm.trim().length >= 2 && searchTerm.trim() === debouncedSearch ? (searchQuery.data?.data || []) : [];
+  const searchResults = searchTerm.trim().length >= 2 ? [...recordResults, ...localCommands].slice(0, 20) : localCommands.slice(0, 12);
   const closeSearch = (restoreFocus = true) => { restoreSearchFocus.current = restoreFocus; setSearchOpen(false); setSearchTerm(''); };
-  const openResult = (href) => { closeSearch(false); navigate(href); };
+  const openResult = (item) => {
+    closeSearch(false);
+    if (item.id && item.type !== 'Page' && item.type !== 'Action') {
+      const recent = readRecent(user?.id).filter((row) => row.id !== item.id);
+      localStorage.setItem(`brightloop_recent_${user?.id || 'user'}`, JSON.stringify([{ id: item.id, title: item.title, subtitle: item.subtitle, type: item.type, href: item.href }, ...recent].slice(0, 10)));
+    }
+    navigate(item.href);
+  };
 
   return (
     <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
@@ -161,7 +179,7 @@ export default function Shell() {
           <div className="command-input-row"><Search size={18}/><input ref={searchInput} value={searchTerm} onChange={(event) => { setSearchTerm(event.target.value); setSelectedResult(0); }} onKeyDown={(event) => {
             if (event.key === 'ArrowDown') { event.preventDefault(); setSelectedResult((index) => Math.min(index + 1, Math.max(0, searchResults.length - 1))); }
             if (event.key === 'ArrowUp') { event.preventDefault(); setSelectedResult((index) => Math.max(0, index - 1)); }
-            if (event.key === 'Enter' && searchResults[selectedResult]) openResult(searchResults[selectedResult].href);
+            if (event.key === 'Enter' && searchResults[selectedResult]) openResult(searchResults[selectedResult]);
           }} placeholder="Search customers, plans, invoices…" aria-label="Search resources or navigate" /><kbd>ESC</kbd><button className="icon-button" onClick={closeSearch} aria-label="Close search"><X size={16}/></button></div>
           <div className="command-results" role="listbox" aria-label="Search results">
             {!searchTerm.trim() && <p className="command-section-label">GO TO</p>}
@@ -170,9 +188,10 @@ export default function Shell() {
             {searchQuery.isError && searchTerm.trim().length >= 2 && searchTerm.trim() === debouncedSearch && <p className="command-error">Search is unavailable. Please try again.</p>}
             {searchResults.map((item, index) => {
               const Icon = item.Icon || resultIcon(item.type);
-              return <button key={`${item.type}-${item.id || item.href}`} role="option" aria-selected={selectedResult === index} className={`command-result ${selectedResult === index ? 'highlighted' : ''}`} onMouseEnter={() => setSelectedResult(index)} onClick={() => openResult(item.href)}>
-                <span className="command-result-icon"><Icon size={15}/></span><span className="command-result-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span><span className="command-type">{item.type}</span><ArrowRight size={14}/>
-              </button>;
+              const showGroup = index === 0 || searchResults[index - 1].type !== item.type;
+              return <Fragment key={`${item.type}-${item.id || item.href}`}>{showGroup && <p className="command-section-label">{item.type === 'Page' || item.type === 'Action' || item.type === 'Recent' ? item.type.toUpperCase() : `${item.type.toUpperCase()} RECORDS`}</p>}<button role="option" aria-selected={selectedResult === index} className={`command-result ${selectedResult === index ? 'highlighted' : ''}`} onMouseEnter={() => setSelectedResult(index)} onClick={() => openResult(item)}>
+                <span className="command-result-icon"><Icon size={15}/></span><span className="command-result-copy"><strong>{highlightMatch(item.title, searchTerm)}</strong><small>{highlightMatch(item.subtitle, searchTerm)}</small></span><span className="command-type">{item.type}</span><ArrowRight size={14}/>
+              </button></Fragment>;
             })}
             {!searchQuery.isFetching && searchTerm.trim().length >= 2 && searchTerm.trim() === debouncedSearch && !searchQuery.isError && searchResults.length === 0 && <p className="command-hint">No matching records found.</p>}
           </div>
@@ -184,5 +203,18 @@ export default function Shell() {
 }
 
 function resultIcon(type) {
-  return ({ Customer: Users, Product: Package, Plan: Tags, Subscription: Wallet, Invoice: FileText, Payment: CreditCard })[type] || Search;
+  return ({ Customer: Users, Product: Package, Plan: Tags, Subscription: Wallet, Quotation: FileText, Invoice: FileText, Payment: CreditCard })[type] || Search;
+}
+
+function highlightMatch(value, query) {
+  const text = String(value || '');
+  const term = query.trim();
+  if (!term) return text;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.split(new RegExp(`(${escaped})`, 'ig')).map((part, index) => part.toLowerCase() === term.toLowerCase() ? <mark key={`${index}-${part}`} className="search-highlight">{part}</mark> : part);
+}
+
+function readRecent(userId) {
+  try { const parsed = JSON.parse(localStorage.getItem(`brightloop_recent_${userId || 'user'}`) || '[]'); return Array.isArray(parsed) ? parsed : []; }
+  catch { return []; }
 }

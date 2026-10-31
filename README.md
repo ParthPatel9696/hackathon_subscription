@@ -8,7 +8,7 @@ The repository is an evolving application. This README describes the implemented
 
 Requirements: Node.js 18 or newer and a MongoDB instance.
 
-1. Copy `.env.example` to `.env` and configure `MONGODB_URI`, `JWT_SECRET`, `PORT`, and `CLIENT_ORIGIN`. Use a long, private JWT secret.
+1. Copy `.env.example` to `.env` and configure `MONGODB_URI`, `JWT_SECRET`, `PORT`, and `CLIENT_ORIGIN`. `JWT_SECRET` must be private and at least 32 characters.
 2. Install server dependencies from the repository root with `npm install`.
 3. Start the API with `npm run dev` (or `npm start`). It listens on port 5000 by default.
 4. In a second terminal, run `cd client`, `npm install`, and `npm run dev`. Vite serves the client on port 5173.
@@ -71,24 +71,26 @@ All paths below are prefixed with `/api`.
 | `GET`, `POST` | `/payments` | Signed in / admin, staff | List permitted payments or record a payment |
 | `GET`, `POST` | `/discounts` | Admin/staff / admin | List or create discount rules |
 | `POST` | `/discounts/validate` | Signed in | Validate a discount code |
+| `PATCH` | `/discounts/:id/status` | Admin | Activate or deactivate a discount |
 
 ## Financial handling
 
-Subscription line prices, tax, and totals are calculated by the server using integer minor units. Client-supplied discount amounts are ignored; discount application is not yet connected to quotation creation. Payments are checked against the invoice balance and update its paid amount and status. Recurring invoices use billing-period fields and a unique compound index to prevent duplicate cycle invoices.
+Subscription line prices, tax, discounts, and totals are recalculated by the server using integer minor units. Client-supplied discount amounts are ignored; a quotation can apply a valid promo code with product scope, minimums, expiry, active state, and an atomically reserved usage limit. Partial and full payments cannot exceed invoice balances. MongoDB transactions are used for invoice/payment writes when supported; standalone deployments use unique billing periods, recoverable schedule updates, and a pending-payment journal.
 
 Historical invoices store their own line and customer details. Product or plan edits therefore do not rewrite existing invoice snapshots.
 
 ## Known gaps
 
-- Password reset email delivery is not configured. In non-production mode, the API returns a simulated reset URL; production responses do not include a link, so an email provider/workflow must be configured before production use.
+- Password reset email delivery is optional and uses Nodemailer when SMTP is configured (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`). Without SMTP, non-production mode returns a simulated reset URL; production responses do not include a link.
 - The public contact page explains that support contact details are not configured; it does not submit a contact form.
 - Customer email and password changes require separate verification/recovery workflows. Staff can view customer records, while customer create/edit/archive is admin-only. Archiving is blocked while active subscriptions or unpaid invoices remain; account records are archived instead of hard-deleted so their financial history stays linked.
 - Quotations can be created as drafts and transitioned, but there is no multi-step editor, quotation detail route, PDF export, expiry workflow, or direct conversion action.
 - Product and plan management supports create/edit, not variants through a dedicated editor, deletion, or full detail routes. Product variants can be edited as JSON.
-- Subscription details, invoice documents/PDF, payment allocation detail, activity log, saved filters, column chooser/resizing, and dashboard widget preferences are not implemented.
-- The dashboard does not provide historical revenue trends because the API does not currently expose a time-series metric endpoint.
+- Subscription detail and plan-change history, customer activity, subscription health, billing calendar, revenue intelligence, command search, and table visibility/order/density/saved-view controls are available. Saved table preferences are per user in local browser storage and do not synchronize across devices.
+- Invoice PDF generation, payment allocation detail, dashboard widget preferences, and a full quotation detail/expiry workflow are not implemented.
+- Revenue Intelligence reports observed subscription events and dated collections; historical MRR/retention are unavailable when older subscription snapshots are missing.
 - The notification center reports actual overdue invoices and upcoming renewals; failed billing attempts are not represented in the current data model.
-- Login and password-reset endpoints do not yet have rate limiting. Payment and invoice updates use guarded single-document writes, but are not wrapped in a MongoDB multi-document transaction.
+- Authentication endpoints have per-IP in-memory rate limits. Multi-instance deployments need a shared rate-limit store. MongoDB transaction paths require a replica set or mongos; the integration run against standalone MongoDB covers the recoverable fallback path.
 - Browser end-to-end tests are not present.
 
 ## Checks
@@ -106,7 +108,7 @@ cd client
 npm run build
 ```
 
-The opt-in API integration test exercises role checks, customer create/edit/archive, profile-to-admin synchronization, customer-scoped search, server-side pricing, and concurrent payment balance updates. It drops its configured database, so point it only at a dedicated disposable test database:
+The opt-in API integration test exercises role permissions, reset/logout revocation, customer ownership, discount eligibility and usage contention, concurrent identifier and billing runs, billing recovery, payment concurrency and recovery, and balance reconciliation. It drops its configured database, so point it only at a dedicated disposable test database:
 
 ```powershell
 $env:BRIGHTLOOP_INTEGRATION_DB='mongodb://127.0.0.1:27017/brightloop_test'
@@ -115,3 +117,5 @@ Remove-Item Env:BRIGHTLOOP_INTEGRATION_DB
 ```
 
 Without `BRIGHTLOOP_INTEGRATION_DB`, the backend suite runs unit tests and skips the database integration test.
+
+The current API and amount/date conventions are described in [API.md](./API.md). Implementation and data-audit boundaries are in [PHASE2_AUDIT.md](./PHASE2_AUDIT.md). No migration should be run against existing business records until their currency and unit have been audited.

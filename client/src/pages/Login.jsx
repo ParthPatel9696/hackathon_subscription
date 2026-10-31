@@ -19,7 +19,7 @@ export default function Login() {
     event.preventDefault(); setError(''); setLoading(true);
     try {
       const { data } = await api.post('/auth/login', form);
-      setSession(data.user, data.token);
+      setSession(data.user);
       queryClient.setQueryData(['current-user'], data.user);
       navigate(location.state?.from?.startsWith('/app') ? location.state.from : '/app/dashboard', { replace: true });
     } catch (err) { setError(err.response?.data?.error || 'Unable to sign in. Please try again.'); }

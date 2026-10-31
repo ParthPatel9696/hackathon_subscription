@@ -40,6 +40,9 @@ exports.verifyToken = async (req, res, next) => {
         error: 'User associated with this session no longer exists.'
       });
     }
+    if (decoded.sessionVersion !== user.sessionVersion) {
+      return res.status(401).json({ success: false, error: 'Session is no longer valid. Please sign in again.' });
+    }
 
     if (user.role === 'customer' && user.accountStatus === 'Archived') {
       return res.status(401).json({ success: false, error: 'This customer account is archived. Contact support to restore access.' });

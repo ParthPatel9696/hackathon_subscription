@@ -1,12 +1,15 @@
-const CURRENCY_SCALE = 100;
+const business = require('../config/business');
+const CURRENCY_SCALE = business.minorUnitsPerRupee;
 
 const toMinor = (value) => {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) {
-    throw new TypeError('Money value must be a finite number.');
-  }
-
-  const minorValue = Math.round(numericValue * CURRENCY_SCALE);
+  const text = String(value ?? '').trim();
+  const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(text);
+  if (!match) throw new TypeError('Money value must be a finite decimal amount.');
+  const fraction = match[3] || '';
+  let minor = BigInt(match[2]) * BigInt(CURRENCY_SCALE) + BigInt((fraction + '00').slice(0, 2));
+  if (fraction.length > 2 && Number(fraction[2]) >= 5) minor += 1n;
+  if (match[1] === '-') minor = -minor;
+  const minorValue = Number(minor);
   if (!Number.isSafeInteger(minorValue)) {
     throw new TypeError('Money value exceeds the supported precision range.');
   }
@@ -37,16 +40,23 @@ const calculateLine = ({ unitPrice, variantPriceExtra = 0, quantity = 1, taxRate
   if (!Number.isInteger(normalizedQuantity) || normalizedQuantity < 1) {
     throw new TypeError('Quantity must be a positive integer.');
   }
-  if (!Number.isFinite(normalizedTaxRate) || normalizedTaxRate < 0) {
-    throw new TypeError('Tax rate must be a non-negative number.');
+  if (!Number.isFinite(normalizedTaxRate) || normalizedTaxRate < 0 || normalizedTaxRate > 1) {
+    throw new TypeError('Tax rate must be between zero and one.');
   }
 
   const unitPriceMinor = toMinor(unitPrice);
   const variantPriceExtraMinor = toMinor(variantPriceExtra);
   const discountMinor = toMinor(discountAmount);
-  const taxableMinor = (unitPriceMinor + variantPriceExtraMinor) * normalizedQuantity;
-  const taxMinor = Math.round(taxableMinor * normalizedTaxRate);
-  const totalMinor = taxableMinor + taxMinor - discountMinor;
+  if (unitPriceMinor < 0 || variantPriceExtraMinor < 0 || discountMinor < 0) throw new TypeError('Prices and discounts must be non-negative.');
+  const subtotalMinor = (unitPriceMinor + variantPriceExtraMinor) * normalizedQuantity;
+  if (!Number.isSafeInteger(subtotalMinor) || discountMinor > subtotalMinor) {
+    throw new TypeError('Discount cannot exceed the line subtotal.');
+  }
+  const taxableMinor = subtotalMinor - discountMinor;
+  const taxScale = 100_000_000;
+  const taxRateScaled = BigInt(Math.round(normalizedTaxRate * taxScale));
+  const taxMinor = Number((BigInt(taxableMinor) * taxRateScaled + BigInt(taxScale / 2)) / BigInt(taxScale));
+  const totalMinor = taxableMinor + taxMinor;
 
   if (![taxableMinor, taxMinor, totalMinor].every(Number.isSafeInteger)) {
     throw new TypeError('Calculated line total exceeds the supported precision range.');
@@ -61,7 +71,7 @@ const calculateLine = ({ unitPrice, variantPriceExtra = 0, quantity = 1, taxRate
     quantity: normalizedQuantity,
     taxMinor,
     discountMinor,
-    subtotalMinor: taxableMinor,
+    subtotalMinor,
     totalMinor
   };
 };

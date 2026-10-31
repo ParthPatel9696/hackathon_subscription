@@ -36,8 +36,10 @@ const userSchema = new mongoose.Schema({
     default: ''
   },
   phone: { type: String, trim: true, default: '' },
+  tags: { type: [String], default: [] },
   billingAddress: { type: String, trim: true, default: '' },
   accountStatus: { type: String, enum: ['Active', 'Archived'], default: 'Active' },
+  sessionVersion: { type: Number, default: 0 },
   termsAcceptedAt: {
     type: Date,
     default: null

@@ -4,10 +4,11 @@ const Subscription = require('../models/Subscription');
 const Invoice = require('../models/Invoice');
 const Payment = require('../models/Payment');
 const { toMinor, fromMinor } = require('../utils/money');
+const { sortFromQuery, applyDateRange } = require('../utils/listQuery');
 
 const strongPassword = (value) => typeof value === 'string' && value.length > 8 && /[A-Z]/.test(value) && /[a-z]/.test(value) && /[!@#$%^&*(),.?":{}|<>]/.test(value);
 const emailValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-const publicFields = 'name email companyName phone billingAddress role accountStatus createdAt';
+const publicFields = 'name email companyName phone billingAddress tags role accountStatus createdAt';
 
 async function hasOpenObligations(customerId) {
   const [activeSubscription, openInvoice] = await Promise.all([
@@ -29,15 +30,19 @@ async function customerPortfolio(customer) {
     Subscription.find({ customer: customer._id }).sort({ createdAt: -1 }),
     Invoice.find({ customer: customer._id }).sort({ invoiceDate: -1 })
   ]);
-  const payments = await Payment.find({ invoice: { $in: invoices.map((invoice) => invoice._id) } }).sort({ paymentDate: -1 });
+  const payments = await Payment.find({ invoice: { $in: invoices.map((invoice) => invoice._id) }, $or: [{ status: 'posted' }, { status: { $exists: false } }] }).sort({ paymentDate: -1 });
   const billableInvoices = invoices.filter((invoice) => invoice.status !== 'Cancelled');
   const invoicedMinor = billableInvoices.reduce((sum, invoice) => sum + (invoice.grandTotalMinor ?? toMinor(invoice.grandTotal)), 0);
   const outstandingMinor = billableInvoices.reduce((sum, invoice) => sum + Math.max(0, (invoice.grandTotalMinor ?? toMinor(invoice.grandTotal)) - (invoice.paidAmountMinor ?? toMinor(invoice.paidAmount || 0))), 0);
+  const activeSubscriptions = subscriptions.filter((item) => item.status === 'Active');
+  const activeRecurringMinor = activeSubscriptions.reduce((sum, item) => sum + (item.recurringTotalMinor ?? toMinor(item.recurringTotal || 0)), 0);
   return {
     customer,
     summary: {
       subscriptions: subscriptions.length,
       activeSubscriptions: subscriptions.filter((item) => item.status === 'Active').length,
+      activeRecurring: fromMinor(activeRecurringMinor),
+      lifetimeRevenue: fromMinor(payments.reduce((sum, payment) => sum + (payment.amountMinor ?? toMinor(payment.amount)), 0)),
       invoiced: fromMinor(invoicedMinor),
       paid: fromMinor(payments.reduce((sum, payment) => sum + (payment.amountMinor ?? toMinor(payment.amount)), 0)),
       outstanding: fromMinor(outstandingMinor)
@@ -60,8 +65,9 @@ exports.listCustomers = async (req, res) => {
       const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = ['name', 'email', 'companyName', 'phone'].map((field) => ({ [field]: { $regex: escaped, $options: 'i' } }));
     }
+    if (!applyDateRange(query, 'createdAt', req.query.startDate, req.query.endDate)) return res.status(400).json({ success: false, error: 'Enter valid date filters.' });
     const [customers, total] = await Promise.all([
-      User.find(query).select(publicFields).sort({ createdAt: -1 }).skip((safePage - 1) * safeLimit).limit(safeLimit),
+      User.find(query).select(publicFields).sort(sortFromQuery(req.query.sort, { record: 'name', status: 'accountStatus', details: 'companyName', createdAt: 'createdAt' }, { createdAt: -1 })).skip((safePage - 1) * safeLimit).limit(safeLimit),
       User.countDocuments(query)
     ]);
     res.json({ success: true, count: customers.length, total, page: safePage, pageSize: safeLimit, data: customers });

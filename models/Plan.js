@@ -10,6 +10,7 @@ const planSchema = new mongoose.Schema({
     default: 'monthly'
   },
   basePrice: { type: Number, required: true, min: 0 },
+  currency: { type: String, enum: ['INR'], default: 'INR' },
   minQuantity: { type: Number, default: 1, min: 1 },
   availableFrom: { type: Date, default: Date.now },
   availableTo: { type: Date },

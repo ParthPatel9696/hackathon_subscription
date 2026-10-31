@@ -377,8 +377,11 @@ kbd { border: 1px solid var(--border); border-radius: 3px; background: var(--hov
 .secondary-button:hover { background: var(--hover); }
 .resource-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 11px; }
 .resource-table thead { background: var(--hover); }
-.resource-table th { border-bottom: 1px solid var(--border); padding: 11px 14px; color: var(--muted); font-size: 8px; font-weight: 650; letter-spacing: .055em; text-transform: uppercase; white-space: nowrap; }
+.resource-table th { position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); padding: 11px 14px; color: var(--muted); font-size: 8px; font-weight: 650; letter-spacing: .055em; text-transform: uppercase; white-space: nowrap; background: var(--hover); }
 .resource-table td { border-bottom: 1px solid var(--border); padding: 11px 14px; color: var(--ink); vertical-align: middle; }
+.resource-table.compact td { padding-top: 6px; padding-bottom: 6px; }
+.table-sort-button { color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+.table-sort-button:hover { color: var(--ink); }
 .resource-table tbody tr:last-child td { border-bottom: 0; }
 .resource-table tbody tr:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
 .resource-table .amount-cell { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
